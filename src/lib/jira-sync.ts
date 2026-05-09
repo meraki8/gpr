@@ -10,7 +10,7 @@ import {
   type JiraIssue,
   type JiraStatusChange,
 } from "./jira";
-import { judgeAcceptanceCriteria } from "./jira-ac";
+import { AC_JUDGE_VERSION, judgeAcceptanceCriteria } from "./jira-ac";
 
 // One day in ms — used for the overdue/stale rate-limiting on
 // externalIds so the same condition only fires one event per day.
@@ -164,11 +164,21 @@ export async function syncJiraProject(
     string,
     { status: string; statusCategory: string; occurredAt: Date }
   >();
+  const lastCompletionByIssueId = new Map<
+    string,
+    {
+      id: string;
+      eventType: string;
+      judgeVersion: number;
+      payload: Record<string, unknown>;
+    }
+  >();
   for (const ev of priorEvents) {
     const payload = ev.payloadJson as {
       issueId?: string;
       status?: string | null;
       statusCategory?: string;
+      acJudgeVersion?: number;
     };
     if (!payload.issueId) continue;
     if (!lastSeenByIssueId.has(payload.issueId)) {
@@ -176,6 +186,21 @@ export async function syncJiraProject(
         status: payload.status ?? "",
         statusCategory: payload.statusCategory ?? "",
         occurredAt: ev.occurredAt,
+      });
+    }
+    if (
+      !lastCompletionByIssueId.has(payload.issueId) &&
+      (ev.eventType === "issue_completed" ||
+        ev.eventType === "issue_completed_ac_failed")
+    ) {
+      lastCompletionByIssueId.set(payload.issueId, {
+        id: ev.id,
+        eventType: ev.eventType,
+        judgeVersion:
+          typeof payload.acJudgeVersion === "number"
+            ? payload.acJudgeVersion
+            : 0,
+        payload: payload as Record<string, unknown>,
       });
     }
   }
@@ -193,7 +218,12 @@ export async function syncJiraProject(
     // First time we've seen this issue, OR it just transitioned
     // INTO Done — both warrant a fresh AC judgement.
     const isFreshlyDone = !prior || prior.statusCategory !== "done";
-    if (isFreshlyDone) judgeQueue.push(issue);
+    const lastCompletion = lastCompletionByIssueId.get(issue.id);
+    const needsJudgeRefresh =
+      !isFreshlyDone &&
+      Boolean(lastCompletion) &&
+      (lastCompletion?.judgeVersion ?? 0) < AC_JUDGE_VERSION;
+    if (isFreshlyDone || needsJudgeRefresh) judgeQueue.push(issue);
   }
 
   for (let i = 0; i < judgeQueue.length; i += AC_JUDGE_CONCURRENCY) {
@@ -320,11 +350,16 @@ export async function syncJiraProject(
       const isFreshlyDone =
         issue.statusCategory === "done" &&
         (!prior || prior.statusCategory !== "done");
-      if (isFreshlyDone) {
+      const isJudgeRefresh =
+        issue.statusCategory === "done" &&
+        acVerdictByIssueId.has(issue.id) &&
+        !isFreshlyDone;
+      if (isFreshlyDone || isJudgeRefresh) {
         const acVerdict = acVerdictByIssueId.get(issue.id) ?? null;
 
         const acPayload = acVerdict
           ? {
+              acJudgeVersion: AC_JUDGE_VERSION,
               acHasAc: acVerdict.hasAc,
               acAllMet: acVerdict.allMet,
               acSummary: acVerdict.summary,
@@ -334,21 +369,61 @@ export async function syncJiraProject(
 
         const acFailed =
           acVerdict !== null && acVerdict.hasAc && !acVerdict.allMet;
+        const eventType = acFailed
+          ? "issue_completed_ac_failed"
+          : "issue_completed";
+        const completionPayload = { ...basePayload, ...acPayload };
+        const existingCompletion = lastCompletionByIssueId.get(issue.id);
 
-        await writeEvent(source.id, projectId, {
-          externalId: `completed:${issue.id}:${issue.updated}`,
-          eventType: acFailed ? "issue_completed_ac_failed" : "issue_completed",
-          payload: { ...basePayload, ...acPayload },
-          userId,
-          occurredAt: new Date(issue.updated),
-        });
-        summary.completed += 1;
+        if (isJudgeRefresh && existingCompletion) {
+          await db.contributionEvent.update({
+            where: { id: existingCompletion.id },
+            data: {
+              eventType,
+              payloadJson: completionPayload as never,
+              userId,
+              weight: EVENT_WEIGHTS[eventType] ?? 0,
+              occurredAt: new Date(issue.updated),
+            },
+          });
 
-        if (acFailed && userId && acVerdict) {
+          if (
+            !acFailed &&
+            existingCompletion.eventType === "issue_completed_ac_failed"
+          ) {
+            await db.card.deleteMany({
+              where: {
+                projectId,
+                cardType: "YELLOW",
+                reason: {
+                  contains: `Jira ticket ${issue.key} marked Done`,
+                },
+              },
+            });
+          }
+        } else {
+          const wrote = await writeEvent(source.id, projectId, {
+            externalId: `completed:${issue.id}:${issue.updated}`,
+            eventType,
+            payload: completionPayload,
+            userId,
+            occurredAt: new Date(issue.updated),
+          });
+          if (wrote) summary.completed += 1;
+        }
+
+        const shouldCreateAcCard =
+          acFailed &&
+          userId &&
+          acVerdict &&
+          (!isJudgeRefresh ||
+            existingCompletion?.eventType !== "issue_completed_ac_failed");
+
+        if (shouldCreateAcCard) {
           await db.card.create({
             data: {
               projectId,
-              userId,
+              userId: userId!,
               cardType: "YELLOW",
               reason: `Jira ticket ${issue.key} marked Done but acceptance criteria not met: "${issue.summary}"`,
               evidenceJson: {

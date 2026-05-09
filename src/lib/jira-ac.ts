@@ -24,6 +24,8 @@ export type AcVerdict = {
   summary: string;
 };
 
+export const AC_JUDGE_VERSION = 2;
+
 const EMPTY_VERDICT: AcVerdict = {
   hasAc: false,
   allMet: true,
@@ -122,10 +124,12 @@ export async function judgeAcceptanceCriteria(input: {
     `  - meta statements such as "the project exists" unless the ticket is specifically about proving project creation or existence`,
     `If no candidates are real acceptance criteria, return hasAc=false and an empty judgements list.`,
     ``,
-    `For each real criterion you keep, decide whether the evidence (description body and recent comments) shows it is met.`,
-    `Be strict on real criteria: if there is no concrete evidence, mark it not met.`,
-    `If you can detect that the team self-reported a checkbox state ([x] or [ ] or similar),`,
-    `record that as selfReportedDone (true/false). Otherwise leave it null.`,
+    `For each real criterion you keep, decide whether it is met.`,
+    `The Jira ticket is already marked Done. Treat that Done status as the team's completion claim for normal, concrete acceptance criteria.`,
+    `A markdown checkbox marker under Acceptance Criteria is formatting, not proof that the criterion is incomplete. Do not fail a criterion only because it is written with [ ].`,
+    `Mark a real criterion not met only when the description or comments directly say it is missing, blocked, failing, contradicted, impossible, or outside the completed work.`,
+    `Do not require comments, links, screenshots, or extra evidence for simple criteria when the Done ticket itself reasonably supports completion.`,
+    `Set selfReportedDone=true only for explicit prose or [x] saying the criterion is done. For [ ] criteria, set selfReportedDone=null unless the text explicitly says it is incomplete.`,
     `Do not invent criteria. Do not include ignored candidates in judgements.`,
     ``,
     `TICKET: ${input.issueKey} — ${input.summary}`,
@@ -178,10 +182,7 @@ export async function judgeAcceptanceCriteria(input: {
     .filter((j) => isPlausibleAcceptanceCriterion(j.acText!))
     .map((j) => ({
       acText: j.acText!.trim().slice(0, 400),
-      selfReportedDone:
-        j.selfReportedDone === true || j.selfReportedDone === false
-          ? j.selfReportedDone
-          : null,
+      selfReportedDone: j.selfReportedDone === true ? true : null,
       aiThinksDone: j.aiThinksDone === true,
       reason: (j.reason ?? "").slice(0, 400) || "(no reason returned)",
     }));
