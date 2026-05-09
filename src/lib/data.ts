@@ -2,6 +2,7 @@ import { notFound, redirect } from "next/navigation";
 import { db } from "./db";
 import { requireDbUser } from "./auth";
 import { CAPABILITIES, resolveCapability } from "./capabilities";
+import { computeProjectHealth } from "./health";
 
 export async function checkContractGate(projectId: string) {
   const user = await requireDbUser();
@@ -137,6 +138,333 @@ export async function getGroup(groupId: string) {
   return group;
 }
 
+// Powers the redesigned project overview / command-centre page.
+// Bundles header counts, leaderboard top-3, the latest match report
+// with its top scorers, a unified recent-activity timeline, and the
+// open-commitment list in a single round-trip.
+export async function getProjectOverview(projectId: string) {
+  const user = await requireDbUser();
+
+  const project = await db.project.findFirst({
+    where: {
+      id: projectId,
+      deletedAt: null,
+      members: { some: { userId: user.id } },
+    },
+    include: {
+      group: { select: { id: true, name: true } },
+      members: {
+        orderBy: [
+          { contributionScore: "desc" },
+          { joinedAt: "asc" },
+        ],
+        include: { user: true },
+      },
+    },
+  });
+  if (!project) notFound();
+
+  const isOwner = project.members.some(
+    (m) => m.userId === user.id && m.role === "OWNER",
+  );
+
+  const ACTIVITY_LOOKBACK = 30;
+  const TIMELINE_SIZE = 8;
+
+  const [
+    meetingsCount,
+    cardsCount,
+    kbCount,
+    latestReport,
+    recentTranscripts,
+    recentCards,
+    recentKb,
+    recentJoins,
+    recentEvents,
+    recentReports,
+    openCommitments,
+    allCardsForCounts,
+  ] = await Promise.all([
+    db.matchReport.count({ where: { projectId } }),
+    db.card.count({ where: { projectId } }),
+    db.knowledgeEntry.count({ where: { projectId } }),
+    db.matchReport.findFirst({
+      where: { projectId },
+      orderBy: { createdAt: "desc" },
+      include: {
+        memberReports: {
+          orderBy: { contributionScore: "desc" },
+          take: 3,
+          include: { user: true },
+        },
+        cards: { include: { user: true } },
+      },
+    }),
+    db.transcript.findMany({
+      where: { projectId },
+      orderBy: { createdAt: "desc" },
+      take: ACTIVITY_LOOKBACK,
+      include: { uploader: { select: { name: true, email: true } } },
+    }),
+    db.card.findMany({
+      where: { projectId },
+      orderBy: { createdAt: "desc" },
+      take: ACTIVITY_LOOKBACK,
+      include: { user: { select: { name: true, email: true } } },
+    }),
+    db.knowledgeEntry.findMany({
+      where: { projectId, source: { not: "transcript" } },
+      orderBy: { createdAt: "desc" },
+      take: ACTIVITY_LOOKBACK,
+    }),
+    db.projectMember.findMany({
+      where: { projectId },
+      orderBy: { joinedAt: "desc" },
+      take: ACTIVITY_LOOKBACK,
+      include: { user: { select: { name: true, email: true } } },
+    }),
+    db.contributionEvent.findMany({
+      where: { projectId, sourceType: "GITHUB" },
+      orderBy: { occurredAt: "desc" },
+      take: ACTIVITY_LOOKBACK,
+    }),
+    db.matchReport.findMany({
+      where: { projectId },
+      orderBy: { createdAt: "desc" },
+      take: ACTIVITY_LOOKBACK,
+    }),
+    db.knowledgeEntry.findMany({
+      where: {
+        projectId,
+        source: "transcript",
+        assignedTo: { not: null },
+        targetDate: { not: null },
+      },
+      orderBy: { targetDate: "asc" },
+      take: 12,
+    }),
+    db.card.findMany({
+      where: { projectId },
+      select: { userId: true, cardType: true },
+    }),
+  ]);
+
+  const cardCountsByUser = new Map<
+    string,
+    { mvp: number; y: number; r: number }
+  >();
+  for (const c of allCardsForCounts) {
+    const bucket = cardCountsByUser.get(c.userId) ?? {
+      mvp: 0,
+      y: 0,
+      r: 0,
+    };
+    if (c.cardType === "MVP") bucket.mvp += 1;
+    else if (c.cardType === "YELLOW") bucket.y += 1;
+    else if (c.cardType === "RED") bucket.r += 1;
+    cardCountsByUser.set(c.userId, bucket);
+  }
+
+  type Activity = {
+    key: string;
+    at: Date;
+    kind:
+      | "transcript"
+      | "card"
+      | "kb"
+      | "join"
+      | "github"
+      | "report";
+    actor: string | null;
+    title: string;
+    detail?: string;
+  };
+
+  const activities: Activity[] = [];
+
+  for (const t of recentTranscripts) {
+    activities.push({
+      key: `t-${t.id}`,
+      at: t.createdAt,
+      kind: "transcript",
+      actor:
+        t.uploader.name ?? t.uploader.email.split("@")[0] ?? "someone",
+      title: t.title ?? "Transcript uploaded",
+    });
+  }
+  for (const c of recentCards) {
+    activities.push({
+      key: `c-${c.id}`,
+      at: c.createdAt,
+      kind: "card",
+      actor: c.user.name ?? c.user.email.split("@")[0] ?? "member",
+      title: `${c.cardType.toLowerCase()} card issued`,
+      detail: c.reason,
+    });
+  }
+  for (const k of recentKb) {
+    activities.push({
+      key: `k-${k.id}`,
+      at: k.createdAt,
+      kind: "kb",
+      actor: null,
+      title: k.title,
+      detail: k.sourceTypeLabel ?? k.source,
+    });
+  }
+  for (const m of recentJoins) {
+    activities.push({
+      key: `j-${m.id}`,
+      at: m.joinedAt,
+      kind: "join",
+      actor: m.user.name ?? m.user.email.split("@")[0],
+      title: `joined the project`,
+    });
+  }
+  // Group GitHub commits by day so a sync of 50 commits doesn't drown
+  // the feed. PRs stay individual since they're rarer.
+  const commitBuckets = new Map<
+    string,
+    { at: Date; count: number; login: string | null }
+  >();
+  for (const e of recentEvents) {
+    const payload = e.payloadJson as {
+      login?: string;
+      title?: string;
+      url?: string;
+    };
+    if (e.eventType === "commit") {
+      const day = e.occurredAt.toISOString().slice(0, 10);
+      const bucket = commitBuckets.get(day) ?? {
+        at: e.occurredAt,
+        count: 0,
+        login: payload.login ?? null,
+      };
+      bucket.count += 1;
+      if (e.occurredAt > bucket.at) bucket.at = e.occurredAt;
+      commitBuckets.set(day, bucket);
+    } else {
+      activities.push({
+        key: `g-${e.id}`,
+        at: e.occurredAt,
+        kind: "github",
+        actor: payload.login ?? null,
+        title: payload.title ?? e.eventType.replace(/_/g, " "),
+      });
+    }
+  }
+  for (const [day, b] of commitBuckets) {
+    activities.push({
+      key: `gc-${day}`,
+      at: b.at,
+      kind: "github",
+      actor: b.login,
+      title: `${b.count} commit${b.count === 1 ? "" : "s"} pushed`,
+    });
+  }
+  for (const r of recentReports) {
+    activities.push({
+      key: `r-${r.id}`,
+      at: r.createdAt,
+      kind: "report",
+      actor: null,
+      title: "Match report published",
+    });
+  }
+
+  activities.sort((a, b) => b.at.getTime() - a.at.getTime());
+  const timeline = activities.slice(0, TIMELINE_SIZE);
+
+  // Resolve open-commitment assignees — assignedTo is a free-form
+  // string (usually a name from the transcript), so we best-effort
+  // match against project members for an avatar.
+  const memberByName = new Map<
+    string,
+    { id: string; name: string | null; email: string; avatarUrl: string | null }
+  >();
+  for (const m of project.members) {
+    const lc = (m.user.name ?? m.user.email).toLowerCase();
+    memberByName.set(lc, {
+      id: m.user.id,
+      name: m.user.name,
+      email: m.user.email,
+      avatarUrl: m.user.avatarUrl,
+    });
+    // also key by first name token
+    const first = lc.split(/[\s@]/)[0];
+    if (first && !memberByName.has(first)) {
+      memberByName.set(first, {
+        id: m.user.id,
+        name: m.user.name,
+        email: m.user.email,
+        avatarUrl: m.user.avatarUrl,
+      });
+    }
+  }
+  const commitments = openCommitments.map((c) => {
+    const key = (c.assignedTo ?? "").toLowerCase().trim();
+    const matched =
+      memberByName.get(key) ??
+      memberByName.get(key.split(/\s+/)[0] ?? "") ??
+      null;
+    return {
+      id: c.id,
+      title: c.title,
+      assignedTo: c.assignedTo,
+      assignee: matched,
+      targetDate: c.targetDate as Date,
+    };
+  });
+
+  const health = await computeProjectHealth(projectId);
+
+  // Trend = current health vs the snapshot taken right before the
+  // most recent transcript analysis. Snapshots are written *after*
+  // analysis, so the most recent snapshot is the score *as of* the
+  // latest meeting. To answer "since last meeting" we compare today
+  // against the second-most-recent snapshot. If only one snapshot
+  // exists we fall back to comparing against it directly so the
+  // first analysis still shows a delta from the implicit 100
+  // baseline. Wrapped in try/catch so the page still renders if the
+  // migration that introduced this table hasn't run yet.
+  let previousHealthScore: number | null = null;
+  try {
+    const recentSnapshots = await db.projectHealthSnapshot.findMany({
+      where: { projectId },
+      orderBy: { computedAt: "desc" },
+      take: 2,
+      select: { score: true, computedAt: true },
+    });
+    previousHealthScore =
+      recentSnapshots.length >= 2
+        ? recentSnapshots[1].score
+        : (recentSnapshots[0]?.score ?? null);
+  } catch (err) {
+    console.error("[overview] health snapshot lookup failed:", err);
+  }
+  const healthTrend =
+    previousHealthScore !== null ? health.score - previousHealthScore : 0;
+
+  return {
+    project,
+    isOwner,
+    counts: {
+      members: project.members.length,
+      meetings: meetingsCount,
+      cards: cardsCount,
+      kb: kbCount,
+    },
+    healthScore: health.score,
+    healthBreakdown: health,
+    healthTrend,
+    previousHealthScore,
+    latestReport,
+    timeline,
+    commitments,
+    cardCountsByUser,
+  };
+}
+
 export async function getProject(projectId: string) {
   const user = await requireDbUser();
   const project = await db.project.findFirst({
@@ -183,7 +511,11 @@ export async function getProject(projectId: string) {
 
 const EVENTS_PER_PAGE = 10;
 
-export async function getProjectSources(projectId: string, page = 1) {
+export async function getProjectSources(
+  projectId: string,
+  page = 1,
+  eventSourceType?: "GITHUB" | "JIRA",
+) {
   const user = await requireDbUser();
 
   const member = await db.projectMember.findFirst({
@@ -205,6 +537,7 @@ export async function getProjectSources(projectId: string, page = 1) {
       },
       contributionSources: { orderBy: { createdAt: "asc" } },
       contributionEvents: {
+        where: eventSourceType ? { sourceType: eventSourceType } : undefined,
         orderBy: { occurredAt: "desc" },
         skip: (page - 1) * EVENTS_PER_PAGE,
         take: EVENTS_PER_PAGE + 1,
@@ -556,6 +889,140 @@ export async function getProjectLeaderboard(projectId: string) {
     githubByUser.set(e.userId, bucket);
   }
 
+  // Jira aggregation: per-user counts of completed / AC-failed
+  // tickets, plus the project's "active sprint" derived from the
+  // most recent payloads (Jira webhook + REST sync both write
+  // sprintActiveName).
+  const jiraEvents = await db.contributionEvent.findMany({
+    where: { projectId, sourceType: "JIRA" },
+    select: {
+      userId: true,
+      eventType: true,
+      payloadJson: true,
+      occurredAt: true,
+    },
+    orderBy: { occurredAt: "desc" },
+  });
+  type JiraBucket = {
+    completed: number;
+    acFailed: number;
+    overdue: number;
+    sprintCompleted: number;
+    sprintTotal: number;
+  };
+  const jiraByUser = new Map<string, JiraBucket>();
+  const sprintNameVotes = new Map<string, number>();
+  // Most recent payload per issueId — used to compute sprint totals
+  // without double-counting an issue that has multiple events.
+  type LatestIssue = {
+    issueId: string;
+    userId: string | null;
+    statusCategory: string;
+    sprint: string | null;
+    isAcFailed: boolean;
+    isOverdue: boolean;
+  };
+  const latestByIssueId = new Map<string, LatestIssue>();
+  // Track which (user, issue) pairs we've already credited a
+  // completion to so re-syncs don't inflate counts.
+  const completedSeen = new Set<string>();
+  const acFailedSeen = new Set<string>();
+  const overdueSeenToday = new Set<string>();
+
+  for (const e of jiraEvents) {
+    const payload = e.payloadJson as {
+      issueId?: string;
+      statusCategory?: string;
+      sprintActiveName?: string | null;
+      acAllMet?: boolean;
+    };
+    if (payload.sprintActiveName) {
+      sprintNameVotes.set(
+        payload.sprintActiveName,
+        (sprintNameVotes.get(payload.sprintActiveName) ?? 0) + 1,
+      );
+    }
+
+    if (payload.issueId && !latestByIssueId.has(payload.issueId)) {
+      latestByIssueId.set(payload.issueId, {
+        issueId: payload.issueId,
+        userId: e.userId,
+        statusCategory: payload.statusCategory ?? "undefined",
+        sprint: payload.sprintActiveName ?? null,
+        isAcFailed:
+          e.eventType === "issue_completed_ac_failed" ||
+          payload.acAllMet === false,
+        isOverdue: e.eventType === "issue_overdue",
+      });
+    }
+
+    if (!e.userId || !payload.issueId) continue;
+    const bucket = jiraByUser.get(e.userId) ?? {
+      completed: 0,
+      acFailed: 0,
+      overdue: 0,
+      sprintCompleted: 0,
+      sprintTotal: 0,
+    };
+    const issueKey = `${e.userId}:${payload.issueId}`;
+    if (
+      e.eventType === "issue_completed" ||
+      e.eventType === "issue_completed_ac_failed"
+    ) {
+      if (!completedSeen.has(issueKey)) {
+        completedSeen.add(issueKey);
+        bucket.completed += 1;
+      }
+    }
+    if (
+      e.eventType === "issue_completed_ac_failed" &&
+      !acFailedSeen.has(issueKey)
+    ) {
+      acFailedSeen.add(issueKey);
+      bucket.acFailed += 1;
+    }
+    if (e.eventType === "issue_overdue") {
+      const dayKey = `${issueKey}:${e.occurredAt.toISOString().slice(0, 10)}`;
+      if (!overdueSeenToday.has(dayKey)) {
+        overdueSeenToday.add(dayKey);
+        bucket.overdue += 1;
+      }
+    }
+    jiraByUser.set(e.userId, bucket);
+  }
+
+  // Active sprint = the sprint name we've seen most often in recent
+  // payloads. This stays stable across syncs even if a sprint is
+  // briefly missing from one issue.
+  const activeSprint =
+    [...sprintNameVotes.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ??
+    null;
+
+  // Per-user sprint progress, computed from the latest snapshot per
+  // issue so re-syncs don't double-count.
+  let sprintCompletedTotal = 0;
+  let sprintTotal = 0;
+  if (activeSprint) {
+    for (const issue of latestByIssueId.values()) {
+      if (issue.sprint !== activeSprint) continue;
+      sprintTotal += 1;
+      const isDone = issue.statusCategory === "done";
+      if (isDone) sprintCompletedTotal += 1;
+      if (issue.userId) {
+        const bucket = jiraByUser.get(issue.userId) ?? {
+          completed: 0,
+          acFailed: 0,
+          overdue: 0,
+          sprintCompleted: 0,
+          sprintTotal: 0,
+        };
+        bucket.sprintTotal += 1;
+        if (isDone) bucket.sprintCompleted += 1;
+        jiraByUser.set(issue.userId, bucket);
+      }
+    }
+  }
+
   const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
 
   const enrichedMembers = project.members.map((m, idx) => {
@@ -599,6 +1066,13 @@ export async function getProjectLeaderboard(projectId: string) {
         RED: 0,
       },
       github: githubByUser.get(m.user.id) ?? { commits: 0, prs: 0 },
+      jira: jiraByUser.get(m.user.id) ?? {
+        completed: 0,
+        acFailed: 0,
+        overdue: 0,
+        sprintCompleted: 0,
+        sprintTotal: 0,
+      },
     };
   });
 
@@ -606,13 +1080,8 @@ export async function getProjectLeaderboard(projectId: string) {
   const totalMeetings = await db.matchReport.count({
     where: { projectId },
   });
-  const healthScore =
-    enrichedMembers.length === 0
-      ? 0
-      : Math.round(
-          enrichedMembers.reduce((s, m) => s + m.contributionScore, 0) /
-            enrichedMembers.length,
-        );
+  const health = await computeProjectHealth(projectId);
+  const healthScore = health.score;
   const mostImproved =
     enrichedMembers
       .filter((m) => m.weekDelta > 0)
@@ -620,12 +1089,16 @@ export async function getProjectLeaderboard(projectId: string) {
   const hasGithubSource = project.contributionSources.some(
     (s) => s.sourceType === "GITHUB",
   );
+  const hasJiraSource = project.contributionSources.some(
+    (s) => s.sourceType === "JIRA",
+  );
 
   return {
     project: {
       id: project.id,
       name: project.name,
       group: project.group,
+      deadline: project.deadline,
     },
     members: enrichedMembers,
     totals: {
@@ -633,11 +1106,102 @@ export async function getProjectLeaderboard(projectId: string) {
       totalMeetings,
       mostImproved,
       hasGithubSource,
+      hasJiraSource,
+      activeSprint,
+      sprintCompleted: sprintCompletedTotal,
+      sprintTotal,
     },
   };
 }
 
-export async function getProjectKb(projectId: string) {
+export const KB_PAGE_SIZE = 20;
+
+export type KbDateRangeKey =
+  | "today"
+  | "7d"
+  | "30d"
+  | "3m"
+  | "all"
+  | "custom";
+
+export type KbFilters = {
+  page?: number;
+  range?: KbDateRangeKey;
+  customFrom?: string | null; // YYYY-MM-DD
+  customTo?: string | null;
+  source?: string | null;
+  q?: string | null;
+};
+
+// Resolve the active date window from a quick-select key (or a
+// custom from/to). Returns null if the range covers everything.
+function resolveKbWindow(
+  range: KbDateRangeKey,
+  customFrom: string | null,
+  customTo: string | null,
+): { gte?: Date; lt?: Date } | null {
+  const now = new Date();
+  const startOfToday = new Date(now);
+  startOfToday.setHours(0, 0, 0, 0);
+  switch (range) {
+    case "today":
+      return { gte: startOfToday };
+    case "7d":
+      return {
+        gte: new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000),
+      };
+    case "30d":
+      return {
+        gte: new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000),
+      };
+    case "3m":
+      return {
+        gte: new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000),
+      };
+    case "custom": {
+      const out: { gte?: Date; lt?: Date } = {};
+      if (customFrom) {
+        const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(customFrom);
+        if (m) {
+          out.gte = new Date(
+            Number(m[1]),
+            Number(m[2]) - 1,
+            Number(m[3]),
+            0,
+            0,
+            0,
+            0,
+          );
+        }
+      }
+      if (customTo) {
+        const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(customTo);
+        if (m) {
+          // End-of-day inclusive: bump to next day midnight.
+          const end = new Date(
+            Number(m[1]),
+            Number(m[2]) - 1,
+            Number(m[3]) + 1,
+            0,
+            0,
+            0,
+            0,
+          );
+          out.lt = end;
+        }
+      }
+      return out.gte || out.lt ? out : null;
+    }
+    case "all":
+    default:
+      return null;
+  }
+}
+
+export async function getProjectKb(
+  projectId: string,
+  filters: KbFilters = {},
+) {
   const user = await requireDbUser();
   const project = await db.project.findFirst({
     where: {
@@ -658,19 +1222,84 @@ export async function getProjectKb(projectId: string) {
   });
   if (!project) notFound();
 
-  // Pull all entries — filtering / grouping / search live in the
-  // client component. KB stays small enough that this is fine even
-  // for projects that have been running for months.
-  const entries = await db.knowledgeEntry.findMany({
-    where: { projectId },
-    orderBy: { createdAt: "desc" },
-    take: 1000,
-  });
+  const range: KbDateRangeKey = filters.range ?? "all";
+  const customFrom = filters.customFrom ?? null;
+  const customTo = filters.customTo ?? null;
+  const sourceFilter = filters.source ?? null;
+  const q = (filters.q ?? "").trim();
+  const page = Math.max(1, Math.floor(filters.page ?? 1));
+
+  const window = resolveKbWindow(range, customFrom, customTo);
+
+  type Where = NonNullable<
+    Parameters<typeof db.knowledgeEntry.findMany>[0]
+  >["where"];
+  const where: Where = { projectId };
+  if (window) {
+    where.createdAt = {
+      ...(window.gte ? { gte: window.gte } : {}),
+      ...(window.lt ? { lt: window.lt } : {}),
+    };
+  }
+  if (sourceFilter) {
+    where.source = sourceFilter;
+  }
+  if (q.length > 0) {
+    where.OR = [
+      { title: { contains: q, mode: "insensitive" } },
+      { content: { contains: q, mode: "insensitive" } },
+      { assignedTo: { contains: q, mode: "insensitive" } },
+    ];
+  }
+
+  const [totalCount, entries, sourceFacets] = await Promise.all([
+    db.knowledgeEntry.count({ where }),
+    db.knowledgeEntry.findMany({
+      where,
+      orderBy: { createdAt: "desc" },
+      skip: (page - 1) * KB_PAGE_SIZE,
+      take: KB_PAGE_SIZE,
+    }),
+    // Source-filter chip counts respect the current date + search
+    // window so the numbers always match what's actually visible.
+    (async () => {
+      const baseWhere: Where = { projectId };
+      if (window) {
+        baseWhere.createdAt = {
+          ...(window.gte ? { gte: window.gte } : {}),
+          ...(window.lt ? { lt: window.lt } : {}),
+        };
+      }
+      if (q.length > 0) {
+        baseWhere.OR = [
+          { title: { contains: q, mode: "insensitive" } },
+          { content: { contains: q, mode: "insensitive" } },
+          { assignedTo: { contains: q, mode: "insensitive" } },
+        ];
+      }
+      const grouped = await db.knowledgeEntry.groupBy({
+        by: ["source"],
+        where: baseWhere,
+        _count: { _all: true },
+      });
+      const counts: Record<string, number> = {};
+      let total = 0;
+      for (const g of grouped) {
+        counts[g.source] = g._count._all;
+        total += g._count._all;
+      }
+      return { counts, total };
+    })(),
+  ]);
+
+  const totalPages = Math.max(
+    1,
+    Math.ceil(totalCount / KB_PAGE_SIZE),
+  );
+  const safePage = Math.min(page, totalPages);
 
   const viewerMember = project.members[0];
   const isOwner = viewerMember?.role === "OWNER";
-  // Manual KB entry is open to owners and any member with the
-  // run_analysis capability — same trust level we use for analysis.
   const canAddManual = viewerMember
     ? resolveCapability(
         viewerMember.role,
@@ -678,7 +1307,25 @@ export async function getProjectKb(projectId: string) {
         viewerMember.capabilities,
       )
     : false;
-  return { project, entries, isOwner, canAddManual };
+  return {
+    project,
+    entries,
+    totalCount,
+    page: safePage,
+    totalPages,
+    pageSize: KB_PAGE_SIZE,
+    sourceCounts: sourceFacets.counts,
+    sourceTotal: sourceFacets.total,
+    isOwner,
+    canAddManual,
+    activeFilters: {
+      range,
+      customFrom,
+      customTo,
+      source: sourceFilter,
+      q,
+    },
+  };
 }
 
 export async function getMatchReport(reportId: string) {

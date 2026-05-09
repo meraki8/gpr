@@ -1,12 +1,20 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { ChevronDown, ChevronRight, Search } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import {
+  ChevronDown,
+  ChevronRight,
+  Search,
+  ChevronLeft,
+} from "lucide-react";
 import { KB_SOURCES } from "@/lib/kb";
+import { FormatBadge } from "@/components/format-badge";
 
 type Entry = {
   id: string;
   source: string;
+  sourceFormat: string | null;
   sourceTypeLabel: string | null;
   title: string;
   content: string;
@@ -21,6 +29,26 @@ type NormalizedEntry = Omit<Entry, "createdAt" | "targetDate"> & {
 };
 
 type DateBucket = "today" | "yesterday" | "thisWeek" | "older";
+type RangeKey = "today" | "7d" | "30d" | "3m" | "all" | "custom";
+
+type ActiveFilters = {
+  range: RangeKey;
+  customFrom: string | null;
+  customTo: string | null;
+  source: string | null;
+  q: string;
+};
+
+type Props = {
+  entries: Entry[];
+  totalCount: number;
+  page: number;
+  totalPages: number;
+  pageSize: number;
+  sourceCounts: Record<string, number>;
+  sourceTotal: number;
+  activeFilters: ActiveFilters;
+};
 
 const SOURCE_FILTERS: Array<{ key: string | null; label: string }> = [
   { key: null, label: "All" },
@@ -28,6 +56,15 @@ const SOURCE_FILTERS: Array<{ key: string | null; label: string }> = [
   { key: KB_SOURCES.GITHUB, label: "GitHub" },
   { key: KB_SOURCES.JIRA, label: "Jira" },
   { key: KB_SOURCES.MANUAL, label: "Manual" },
+];
+
+const RANGE_CHIPS: Array<{ key: RangeKey; label: string }> = [
+  { key: "today", label: "Today" },
+  { key: "7d", label: "Last 7 days" },
+  { key: "30d", label: "Last 30 days" },
+  { key: "3m", label: "Last 3 months" },
+  { key: "all", label: "All time" },
+  { key: "custom", label: "Custom range" },
 ];
 
 const SOURCE_BADGE_COLOR: Record<string, string> = {
@@ -73,24 +110,6 @@ function bucketOf(date: Date, now: Date): DateBucket {
   return "older";
 }
 
-// Parse a YYYY-MM-DD value from <input type="date"> as a local-time
-// date so range comparisons match what the user sees in the picker.
-function parseDateInput(value: string): Date | null {
-  if (!value) return null;
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
-  if (!m) return null;
-  const d = new Date(
-    Number(m[1]),
-    Number(m[2]) - 1,
-    Number(m[3]),
-    0,
-    0,
-    0,
-    0,
-  );
-  return Number.isNaN(d.getTime()) ? null : d;
-}
-
 function formatDate(d: Date) {
   return d.toLocaleDateString(undefined, {
     month: "short",
@@ -100,9 +119,19 @@ function formatDate(d: Date) {
 
 export function KnowledgeBaseExplorer({
   entries: rawEntries,
-}: {
-  entries: Entry[];
-}) {
+  totalCount,
+  page,
+  totalPages,
+  pageSize,
+  sourceCounts,
+  sourceTotal,
+  activeFilters,
+}: Props) {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const [pending, startTransition] = useTransition();
+
   const entries = useMemo<NormalizedEntry[]>(
     () =>
       rawEntries.map((e) => ({
@@ -121,70 +150,117 @@ export function KnowledgeBaseExplorer({
     [rawEntries],
   );
 
-  const [search, setSearch] = useState("");
-  const [sourceFilter, setSourceFilter] = useState<string | null>(null);
-  const [fromDate, setFromDate] = useState<string>("");
-  const [toDate, setToDate] = useState<string>("");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+
+  // Local search state — debounced into the URL so the user can type
+  // without every keystroke causing a server round-trip.
+  const [searchInput, setSearchInput] = useState(activeFilters.q);
+  useEffect(() => {
+    setSearchInput(activeFilters.q);
+  }, [activeFilters.q]);
+
+  const debounceRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (searchInput === activeFilters.q) return;
+    if (debounceRef.current) window.clearTimeout(debounceRef.current);
+    debounceRef.current = window.setTimeout(() => {
+      pushParams({ q: searchInput || null, page: 1 });
+    }, 300);
+    return () => {
+      if (debounceRef.current) window.clearTimeout(debounceRef.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchInput]);
+
+  // Custom range scratch state — only writes to the URL when the
+  // user hits Apply.
+  const [customFrom, setCustomFrom] = useState(
+    activeFilters.customFrom ?? "",
+  );
+  const [customTo, setCustomTo] = useState(activeFilters.customTo ?? "");
+  useEffect(() => {
+    setCustomFrom(activeFilters.customFrom ?? "");
+    setCustomTo(activeFilters.customTo ?? "");
+  }, [activeFilters.customFrom, activeFilters.customTo]);
 
   const now = useMemo(() => new Date(), []);
 
-  // Apply date range filter (from / to inclusive).
-  const dateFiltered = useMemo(() => {
-    const from = parseDateInput(fromDate);
-    const to = parseDateInput(toDate);
-    if (!from && !to) return entries;
-    return entries.filter((e) => {
-      const c = e.createdAt;
-      if (from && c < from) return false;
-      if (to) {
-        // Inclusive end-of-day: bump `to` to next day midnight.
-        const toEndExclusive = new Date(to);
-        toEndExclusive.setDate(toEndExclusive.getDate() + 1);
-        if (c >= toEndExclusive) return false;
-      }
-      return true;
+  function buildQs(
+    overrides: Record<string, string | number | null | undefined>,
+  ) {
+    const next = new URLSearchParams(searchParams?.toString() ?? "");
+    for (const [k, v] of Object.entries(overrides)) {
+      if (v === null || v === undefined || v === "") next.delete(k);
+      else next.set(k, String(v));
+    }
+    const s = next.toString();
+    return s ? `?${s}` : "";
+  }
+
+  function pushParams(
+    overrides: Record<string, string | number | null | undefined>,
+  ) {
+    const url = `${pathname}${buildQs(overrides)}`;
+    startTransition(() => {
+      router.push(url, { scroll: false });
     });
-  }, [entries, fromDate, toDate]);
+  }
 
-  const dateAndSearchFiltered = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return dateFiltered;
-    return dateFiltered.filter(
-      (e) =>
-        e.title.toLowerCase().includes(q) ||
-        e.content.toLowerCase().includes(q) ||
-        (e.assignedTo?.toLowerCase().includes(q) ?? false),
-    );
-  }, [dateFiltered, search]);
-
-  const sourceCounts = useMemo(() => {
-    const counts: Record<string, number> = {};
-    for (const e of dateAndSearchFiltered) {
-      counts[e.source] = (counts[e.source] ?? 0) + 1;
+  function setRange(key: RangeKey) {
+    if (key === "custom") {
+      // Switching to custom keeps existing custom from/to in the URL
+      // if they're already set; otherwise blanks them so the inputs
+      // open empty.
+      pushParams({ range: "custom", page: 1 });
+    } else {
+      pushParams({
+        range: key,
+        from: null,
+        to: null,
+        page: 1,
+      });
     }
-    return counts;
-  }, [dateAndSearchFiltered]);
+  }
 
-  const totalAfterDateAndSearch = dateAndSearchFiltered.length;
+  function applyCustom() {
+    if (!customFrom && !customTo) return;
+    pushParams({
+      range: "custom",
+      from: customFrom || null,
+      to: customTo || null,
+      page: 1,
+    });
+  }
 
-  const visible = useMemo(() => {
-    if (!sourceFilter) return dateAndSearchFiltered;
-    return dateAndSearchFiltered.filter((e) => e.source === sourceFilter);
-  }, [dateAndSearchFiltered, sourceFilter]);
+  function setSource(key: string | null) {
+    pushParams({ source: key, page: 1 });
+  }
 
-  const groups = useMemo(() => {
-    const order: DateBucket[] = ["today", "yesterday", "thisWeek", "older"];
-    const map = new Map<DateBucket, NormalizedEntry[]>();
-    for (const e of visible) {
-      const b = bucketOf(e.createdAt, now);
-      if (!map.has(b)) map.set(b, []);
-      map.get(b)!.push(e);
-    }
-    return order
-      .filter((b) => map.has(b))
-      .map((b) => ({ bucket: b, entries: map.get(b)! }));
-  }, [visible, now]);
+  function clearAllFilters() {
+    pushParams({
+      range: null,
+      from: null,
+      to: null,
+      source: null,
+      q: null,
+      page: 1,
+    });
+  }
+
+  const explorerRef = useRef<HTMLDivElement | null>(null);
+  function goToPage(target: number) {
+    const clamped = Math.max(1, Math.min(totalPages, target));
+    if (clamped === page) return;
+    pushParams({ page: clamped });
+    // Scroll the explorer into view so the user lands at the top of
+    // the list rather than wherever they were on the page before.
+    requestAnimationFrame(() => {
+      explorerRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+    });
+  }
 
   function toggleExpanded(id: string) {
     setExpanded((prev) => {
@@ -195,23 +271,27 @@ export function KnowledgeBaseExplorer({
     });
   }
 
-  function clearAllFilters() {
-    setSearch("");
-    setSourceFilter(null);
-    setFromDate("");
-    setToDate("");
-  }
+  // Group visible entries within the current page by bucket.
+  const groups = useMemo(() => {
+    const order: DateBucket[] = ["today", "yesterday", "thisWeek", "older"];
+    const map = new Map<DateBucket, NormalizedEntry[]>();
+    for (const e of entries) {
+      const b = bucketOf(e.createdAt, now);
+      if (!map.has(b)) map.set(b, []);
+      map.get(b)!.push(e);
+    }
+    return order
+      .filter((b) => map.has(b))
+      .map((b) => ({ bucket: b, entries: map.get(b)! }));
+  }, [entries, now]);
 
-  function clearDateRange() {
-    setFromDate("");
-    setToDate("");
-  }
-
-  const totalAcrossAll = entries.length;
-  const dateRangeActive = !!fromDate || !!toDate;
+  const hasFilter =
+    activeFilters.range !== "all" ||
+    !!activeFilters.source ||
+    !!activeFilters.q;
 
   return (
-    <div>
+    <div ref={explorerRef} style={{ opacity: pending ? 0.7 : 1 }}>
       {/* Search */}
       <div style={{ position: "relative", marginBottom: 16 }}>
         <Search
@@ -228,57 +308,79 @@ export function KnowledgeBaseExplorer({
         <input
           type="text"
           placeholder="Search title, content, or assignee…"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
+          value={searchInput}
+          onChange={(e) => setSearchInput(e.target.value)}
           className="field"
           style={{ paddingLeft: 36 }}
         />
       </div>
 
-      {/* Date range */}
+      {/* Date range — quick chips + custom */}
       <FilterRow label="Date">
-        <input
-          type="date"
-          value={fromDate}
-          onChange={(e) => setFromDate(e.target.value)}
-          className="field num"
-          style={{ width: 160, padding: "8px 12px", fontSize: 13 }}
-          aria-label="From date"
-        />
-        <span className="mute-ink" style={{ fontSize: 13 }}>
-          →
-        </span>
-        <input
-          type="date"
-          value={toDate}
-          onChange={(e) => setToDate(e.target.value)}
-          className="field num"
-          style={{ width: 160, padding: "8px 12px", fontSize: 13 }}
-          aria-label="To date"
-        />
-        {dateRangeActive && (
+        {RANGE_CHIPS.map((c) => (
+          <Chip
+            key={c.key}
+            active={activeFilters.range === c.key}
+            onClick={() => setRange(c.key)}
+          >
+            {c.label}
+          </Chip>
+        ))}
+      </FilterRow>
+
+      {activeFilters.range === "custom" && (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            flexWrap: "wrap",
+            marginBottom: 12,
+            paddingLeft: 70,
+          }}
+        >
+          <input
+            type="date"
+            value={customFrom}
+            onChange={(e) => setCustomFrom(e.target.value)}
+            className="field num"
+            style={{ width: 160, padding: "8px 12px", fontSize: 13 }}
+            aria-label="From date"
+          />
+          <span className="mute-ink" style={{ fontSize: 13 }}>
+            →
+          </span>
+          <input
+            type="date"
+            value={customTo}
+            onChange={(e) => setCustomTo(e.target.value)}
+            className="field num"
+            style={{ width: 160, padding: "8px 12px", fontSize: 13 }}
+            aria-label="To date"
+          />
           <button
             type="button"
-            onClick={clearDateRange}
-            className="pill pill-ghost pill-sm"
+            onClick={applyCustom}
+            className="pill pill-sm"
+            disabled={!customFrom && !customTo}
           >
-            Clear
+            Apply →
           </button>
-        )}
-      </FilterRow>
+        </div>
+      )}
 
       {/* Source filter */}
       <FilterRow label="Source">
         {SOURCE_FILTERS.map((f) => {
-          const active = sourceFilter === f.key;
+          const active = activeFilters.source === f.key;
           const count = f.key
             ? (sourceCounts[f.key] ?? 0)
-            : totalAfterDateAndSearch;
+            : sourceTotal;
           return (
             <Chip
               key={f.label}
               active={active}
-              onClick={() => setSourceFilter(f.key)}
+              onClick={() => setSource(f.key)}
             >
               {f.label}{" "}
               <span
@@ -293,7 +395,7 @@ export function KnowledgeBaseExplorer({
       </FilterRow>
 
       {/* Column headers */}
-      {visible.length > 0 && (
+      {entries.length > 0 && (
         <div
           style={{
             display: "grid",
@@ -317,12 +419,11 @@ export function KnowledgeBaseExplorer({
       )}
 
       {/* Timeline */}
-      {groups.length === 0 ? (
+      {entries.length === 0 ? (
         <EmptyState
-          totalAcrossAll={totalAcrossAll}
-          search={search}
-          dateRangeActive={dateRangeActive}
-          sourceFilter={sourceFilter}
+          totalCount={totalCount}
+          hasFilter={hasFilter}
+          q={activeFilters.q}
           onClear={clearAllFilters}
         />
       ) : (
@@ -341,6 +442,152 @@ export function KnowledgeBaseExplorer({
           ))}
         </div>
       )}
+
+      {/* Pagination */}
+      {totalCount > 0 && totalPages > 1 && (
+        <Pagination
+          page={page}
+          totalPages={totalPages}
+          totalCount={totalCount}
+          pageSize={pageSize}
+          onPage={goToPage}
+        />
+      )}
+    </div>
+  );
+}
+
+function Pagination({
+  page,
+  totalPages,
+  totalCount,
+  pageSize,
+  onPage,
+}: {
+  page: number;
+  totalPages: number;
+  totalCount: number;
+  pageSize: number;
+  onPage: (n: number) => void;
+}) {
+  const [jumpInput, setJumpInput] = useState(String(page));
+  useEffect(() => {
+    setJumpInput(String(page));
+  }, [page]);
+
+  const start = (page - 1) * pageSize + 1;
+  const end = Math.min(page * pageSize, totalCount);
+
+  return (
+    <div
+      style={{
+        marginTop: 32,
+        paddingTop: 24,
+        borderTop: "1px solid var(--line)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 16,
+        flexWrap: "wrap",
+      }}
+    >
+      <div className="mute-ink" style={{ fontSize: 13 }}>
+        <span className="num">{start}</span>–<span className="num">{end}</span>{" "}
+        of <span className="num">{totalCount}</span>
+      </div>
+
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          flexWrap: "wrap",
+        }}
+      >
+        <button
+          type="button"
+          onClick={() => onPage(page - 1)}
+          disabled={page <= 1}
+          className="pill pill-ghost pill-sm"
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 4,
+            opacity: page <= 1 ? 0.45 : 1,
+          }}
+        >
+          <ChevronLeft size={14} />
+          Previous
+        </button>
+        <span
+          className="num"
+          style={{
+            fontSize: 13,
+            color: "var(--ink)",
+            padding: "0 6px",
+            whiteSpace: "nowrap",
+          }}
+        >
+          Page {page} of {totalPages}
+        </span>
+        <button
+          type="button"
+          onClick={() => onPage(page + 1)}
+          disabled={page >= totalPages}
+          className="pill pill-ghost pill-sm"
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 4,
+            opacity: page >= totalPages ? 0.45 : 1,
+          }}
+        >
+          Next
+          <ChevronRight size={14} />
+        </button>
+
+        {totalPages > 5 && (
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              const n = Number(jumpInput);
+              if (Number.isFinite(n) && n >= 1 && n <= totalPages) {
+                onPage(n);
+              }
+            }}
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 6,
+              marginLeft: 8,
+            }}
+          >
+            <span
+              className="mute-ink"
+              style={{ fontSize: 12, letterSpacing: "0.04em" }}
+            >
+              Go to
+            </span>
+            <input
+              type="number"
+              min={1}
+              max={totalPages}
+              value={jumpInput}
+              onChange={(e) => setJumpInput(e.target.value)}
+              className="field num"
+              style={{
+                width: 64,
+                padding: "6px 10px",
+                fontSize: 13,
+              }}
+              aria-label="Jump to page"
+            />
+            <button type="submit" className="pill pill-ghost pill-sm">
+              Go
+            </button>
+          </form>
+        )}
+      </div>
     </div>
   );
 }
@@ -369,7 +616,12 @@ function FilterRow({
         {label}
       </span>
       <div
-        style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}
+        style={{
+          display: "flex",
+          flexWrap: "wrap",
+          gap: 8,
+          alignItems: "center",
+        }}
       >
         {children}
       </div>
@@ -381,17 +633,20 @@ function Chip({
   active,
   onClick,
   children,
+  disabled,
 }: {
   active: boolean;
   onClick: () => void;
   children: React.ReactNode;
+  disabled?: boolean;
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
+      disabled={disabled}
       className={active ? "pill pill-sm" : "pill pill-ghost pill-sm"}
-      style={{ cursor: "pointer" }}
+      style={{ cursor: disabled ? "not-allowed" : "pointer" }}
     >
       {children}
     </button>
@@ -436,8 +691,6 @@ function EntryAccordion({
     ? `${entry.source} · ${entry.sourceTypeLabel}`
     : entry.source;
 
-  // Highlight overdue items (target in the past) so they stand out
-  // in the tracker view. Today and future use ink; past uses red.
   const targetColor = (() => {
     if (!entry.targetDate) return "var(--mute-2)";
     const today = startOfDay(new Date());
@@ -468,18 +721,30 @@ function EntryAccordion({
         }}
       >
         <span
-          className="label"
           style={{
-            color,
-            fontSize: 11,
-            letterSpacing: "0.06em",
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 6,
+            minWidth: 0,
           }}
           title={badgeText}
         >
-          {badgeText}
+          <span
+            className="label"
+            style={{
+              color,
+              fontSize: 11,
+              letterSpacing: "0.06em",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {badgeText}
+          </span>
+          {entry.sourceFormat && (
+            <FormatBadge format={entry.sourceFormat} />
+          )}
         </span>
         <span
           style={{
@@ -599,21 +864,17 @@ function EntryAccordion({
 }
 
 function EmptyState({
-  totalAcrossAll,
-  search,
-  dateRangeActive,
-  sourceFilter,
+  totalCount,
+  hasFilter,
+  q,
   onClear,
 }: {
-  totalAcrossAll: number;
-  search: string;
-  dateRangeActive: boolean;
-  sourceFilter: string | null;
+  totalCount: number;
+  hasFilter: boolean;
+  q: string;
   onClear: () => void;
 }) {
-  const hasFilter = !!search || dateRangeActive || sourceFilter !== null;
-
-  if (totalAcrossAll === 0) {
+  if (totalCount === 0 && !hasFilter) {
     return (
       <div style={{ padding: "60px 0", textAlign: "center" }}>
         <p className="body" style={{ margin: 0 }}>
@@ -627,11 +888,11 @@ function EmptyState({
     );
   }
 
-  if (search) {
+  if (q) {
     return (
       <div style={{ padding: "60px 0", textAlign: "center" }}>
         <p className="body" style={{ margin: 0 }}>
-          No entries match &ldquo;{search}&rdquo;.
+          No entries match &ldquo;{q}&rdquo;.
         </p>
         {hasFilter && (
           <button

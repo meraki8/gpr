@@ -210,15 +210,19 @@ model ContextFile {
 }
 
 model Transcript {
-  id         String           @id @default(cuid())
-  projectId  String
-  uploadedBy String
-  title      String?
-  meetingAt  DateTime?
-  rawText    String           @db.Text
-  blobUrl    String?
-  source     TranscriptSource
-  createdAt  DateTime         @default(now())
+  id           String           @id @default(cuid())
+  projectId    String
+  uploadedBy   String
+  title        String?
+  meetingAt    DateTime?
+  rawText      String           @db.Text
+  blobUrl      String?
+  source       TranscriptSource
+  // Auto-detected platform format (discord, slack, whatsapp, email,
+  // zoom, meeting, other). Distinct from `source`, which records the
+  // upload origin (PASTE / FILE).
+  sourceFormat String?
+  createdAt    DateTime         @default(now())
 
   project      Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
   uploader     User          @relation("TranscriptUploader", fields: [uploadedBy], references: [id])
@@ -381,12 +385,30 @@ model ScoreSnapshot {
   @@index([computedAt])
 }
 
+// Project-level health score snapshots — taken after each transcript
+// analysis so we can render an "X since last meeting" trend without
+// recomputing the historical formula from scratch.
+model ProjectHealthSnapshot {
+  id            String   @id @default(cuid())
+  projectId     String
+  score         Int
+  matchReportId String?  @unique
+  reason        String   @db.Text
+  computedAt    DateTime @default(now())
+
+  @@index([projectId, computedAt])
+}
+
 // =================== KNOWLEDGE BASE ===================
 
 model KnowledgeEntry {
   id              String    @id @default(cuid())
   projectId       String
   source          String
+  // Optional secondary tag inherited from the parent transcript when
+  // this entry was extracted during analysis (discord, slack, …).
+  // Lets the KB UI render a dual badge "TRANSCRIPT · DISCORD".
+  sourceFormat    String?
   sourceRefId     String?
   sourceTypeLabel String?
   title           String

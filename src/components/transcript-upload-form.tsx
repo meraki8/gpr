@@ -1,5 +1,6 @@
 "use client";
 
+import { UploadCloud, X } from "lucide-react";
 import { useRef, useState, useTransition } from "react";
 import { analyzeTranscript } from "@/app/projects/[projectId]/actions";
 
@@ -16,16 +17,16 @@ function defaultMeetingAt(): string {
 
 const DUPLICATE_PREFIX = "DUPLICATE_TRANSCRIPT|";
 
+const ACCEPTED_TYPES = ".txt,.pdf,text/plain,application/pdf";
+
 export function TranscriptUploadForm({ projectId }: { projectId: string }) {
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
-  const [fileName, setFileName] = useState<string | null>(null);
-  // ISO of the existing matching transcript when the server flags
-  // this paste as a likely duplicate. Cleared on edit.
+  const [file, setFile] = useState<File | null>(null);
+  const [dragOver, setDragOver] = useState(false);
   const [duplicateIso, setDuplicateIso] = useState<string | null>(null);
   const formRef = useRef<HTMLFormElement>(null);
-  // Ref (not state) — a single submit's confirmation flag, consumed
-  // and reset within onSubmit so a later submit doesn't auto-confirm.
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const confirmDupRef = useRef(false);
 
   const onSubmit = (formData: FormData) => {
@@ -35,12 +36,15 @@ export function TranscriptUploadForm({ projectId }: { projectId: string }) {
       formData.set("confirmDuplicate", "true");
       confirmDupRef.current = false;
     }
+    // If the user dropped a file via DnD it lives only in React
+    // state — sync it onto the form so the server action sees it.
+    if (file) {
+      formData.set("file", file, file.name);
+    }
     startTransition(async () => {
       try {
         await analyzeTranscript(formData);
       } catch (e) {
-        // Server action throws are bubbled here; redirect-on-success
-        // throws a NEXT_REDIRECT we should not display.
         const msg = e instanceof Error ? e.message : "Something went wrong";
         if (msg.includes("NEXT_REDIRECT")) return;
         if (msg.startsWith(DUPLICATE_PREFIX)) {
@@ -55,6 +59,38 @@ export function TranscriptUploadForm({ projectId }: { projectId: string }) {
   const runAnyway = () => {
     confirmDupRef.current = true;
     formRef.current?.requestSubmit();
+  };
+
+  const acceptFile = (list: FileList | File[]) => {
+    const first = Array.from(list).find(
+      (f) =>
+        /\.(txt|pdf)$/i.test(f.name) ||
+        f.type === "text/plain" ||
+        f.type === "application/pdf",
+    );
+    if (!first) return;
+    setFile(first);
+  };
+
+  const clearFile = () => {
+    setFile(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
+  };
+
+  const dropZoneStyle: React.CSSProperties = {
+    position: "relative",
+    border: `2px dashed ${dragOver ? "var(--red)" : "var(--line)"}`,
+    background: dragOver
+      ? "color-mix(in srgb, var(--red) 8%, var(--paper))"
+      : "var(--paper)",
+    borderRadius: 12,
+    padding: "36px 24px",
+    textAlign: "center",
+    transition: "border-color 0.15s ease, background 0.15s ease",
+    cursor: pending ? "not-allowed" : "pointer",
+    opacity: pending ? 0.6 : 1,
   };
 
   return (
@@ -92,19 +128,201 @@ export function TranscriptUploadForm({ projectId }: { projectId: string }) {
 
       <textarea
         name="rawText"
-        placeholder={`[00:00] Maya: Atlas standup, May 9. Quick round.
-[00:18] Maya: I'll have the API contract finalized by Thursday EOD.
-
-— or upload a file below —`}
-        rows={10}
+        placeholder="[00:00] Maya: Atlas standup, May 9. Quick round.
+[00:18] Maya: I'll have the API contract finalized by Thursday EOD."
+        rows={9}
         className="field field-lg num"
         style={{ resize: "vertical" }}
         disabled={pending}
         onChange={() => {
-          // Editing the text invalidates a previous duplicate flag.
           if (duplicateIso) setDuplicateIso(null);
         }}
       />
+
+      {/* — or — divider */}
+      <div
+        aria-hidden
+        style={{
+          display: "grid",
+          gridTemplateColumns: "1fr auto 1fr",
+          gap: 14,
+          alignItems: "center",
+          margin: "4px 0",
+        }}
+      >
+        <span
+          style={{
+            height: 1,
+            background: "var(--line)",
+            display: "block",
+          }}
+        />
+        <span
+          className="label"
+          style={{
+            color: "var(--mute)",
+            letterSpacing: "0.16em",
+            padding: "0 4px",
+          }}
+        >
+          or
+        </span>
+        <span
+          style={{
+            height: 1,
+            background: "var(--line)",
+            display: "block",
+          }}
+        />
+      </div>
+
+      {/* Drag-and-drop zone */}
+      <div
+        role="button"
+        tabIndex={0}
+        aria-label="Upload transcript file"
+        onClick={() => {
+          if (!pending) fileInputRef.current?.click();
+        }}
+        onKeyDown={(e) => {
+          if ((e.key === "Enter" || e.key === " ") && !pending) {
+            e.preventDefault();
+            fileInputRef.current?.click();
+          }
+        }}
+        onDragOver={(e) => {
+          e.preventDefault();
+          if (!pending) setDragOver(true);
+        }}
+        onDragEnter={(e) => {
+          e.preventDefault();
+          if (!pending) setDragOver(true);
+        }}
+        onDragLeave={(e) => {
+          e.preventDefault();
+          setDragOver(false);
+        }}
+        onDrop={(e) => {
+          e.preventDefault();
+          setDragOver(false);
+          if (pending) return;
+          if (e.dataTransfer.files?.length) {
+            acceptFile(e.dataTransfer.files);
+          }
+        }}
+        style={dropZoneStyle}
+      >
+        <input
+          ref={fileInputRef}
+          type="file"
+          name="file"
+          accept={ACCEPTED_TYPES}
+          disabled={pending}
+          onChange={(e) => {
+            if (e.target.files) acceptFile(e.target.files);
+          }}
+          style={{
+            position: "absolute",
+            width: 1,
+            height: 1,
+            padding: 0,
+            margin: -1,
+            overflow: "hidden",
+            clip: "rect(0,0,0,0)",
+            border: 0,
+          }}
+        />
+        <div
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            width: 48,
+            height: 48,
+            borderRadius: 999,
+            background: dragOver
+              ? "var(--red)"
+              : "color-mix(in srgb, var(--red) 14%, var(--paper))",
+            color: dragOver ? "#fff" : "var(--red)",
+            marginBottom: 14,
+            transition: "background 0.15s ease, color 0.15s ease",
+          }}
+        >
+          <UploadCloud size={22} strokeWidth={2} />
+        </div>
+        <div
+          style={{
+            fontSize: 16,
+            fontWeight: 600,
+            color: "var(--ink)",
+            marginBottom: 4,
+          }}
+        >
+          {dragOver
+            ? "Drop it"
+            : "Drag and drop your transcript here"}
+        </div>
+        <div className="mute-ink" style={{ fontSize: 13 }}>
+          or click to browse
+        </div>
+        <div
+          className="mute-ink"
+          style={{ fontSize: 12, marginTop: 10, letterSpacing: "0.04em" }}
+        >
+          Accepts .txt and .pdf files
+        </div>
+      </div>
+
+      {file && (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 12,
+            padding: "10px 14px",
+            border: "1px solid var(--line)",
+            borderRadius: 8,
+            background: "var(--paper)",
+          }}
+        >
+          <span
+            style={{
+              flex: 1,
+              minWidth: 0,
+              fontSize: 14,
+              fontWeight: 500,
+              color: "var(--ink)",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {file.name}
+          </span>
+          <span
+            className="mute-ink num"
+            style={{ fontSize: 12, whiteSpace: "nowrap" }}
+          >
+            {formatBytes(file.size)}
+          </span>
+          <button
+            type="button"
+            onClick={clearFile}
+            disabled={pending}
+            aria-label={`Remove ${file.name}`}
+            style={{
+              background: "transparent",
+              border: 0,
+              color: "var(--mute)",
+              cursor: pending ? "not-allowed" : "pointer",
+              padding: 4,
+              lineHeight: 0,
+            }}
+          >
+            <X size={14} />
+          </button>
+        </div>
+      )}
 
       <div
         style={{
@@ -114,52 +332,6 @@ export function TranscriptUploadForm({ projectId }: { projectId: string }) {
           flexWrap: "wrap",
         }}
       >
-        <label
-          className="pill pill-ghost pill-sm"
-          style={{
-            cursor: pending ? "not-allowed" : "pointer",
-            opacity: pending ? 0.4 : 1,
-          }}
-        >
-          {fileName ? `📎 ${fileName}` : "📎 Upload .txt or .pdf"}
-          <input
-            type="file"
-            name="file"
-            accept=".txt,.pdf,text/plain,application/pdf"
-            disabled={pending}
-            onChange={(e) => {
-              const f = e.target.files?.[0] ?? null;
-              setFileName(f ? f.name : null);
-            }}
-            style={{ display: "none" }}
-          />
-        </label>
-        {fileName && !pending && (
-          <button
-            type="button"
-            className="lk-mute"
-            style={{
-              fontSize: 12,
-              background: "none",
-              border: 0,
-              cursor: "pointer",
-              fontFamily: "inherit",
-              padding: 0,
-            }}
-            onClick={() => {
-              setFileName(null);
-              if (formRef.current) {
-                const fileInput = formRef.current.querySelector(
-                  'input[type="file"]',
-                ) as HTMLInputElement | null;
-                if (fileInput) fileInput.value = "";
-              }
-            }}
-          >
-            Clear file
-          </button>
-        )}
-
         <span
           className="mute-ink"
           style={{
@@ -198,7 +370,7 @@ export function TranscriptUploadForm({ projectId }: { projectId: string }) {
           }}
         >
           <span style={{ flex: 1, minWidth: 220 }}>
-            This transcript appears to have already been uploaded on{" "}
+            This transcript looks similar to one uploaded on{" "}
             <strong>
               {new Date(duplicateIso).toLocaleDateString(undefined, {
                 weekday: "short",
@@ -207,15 +379,23 @@ export function TranscriptUploadForm({ projectId }: { projectId: string }) {
                 year: "numeric",
               })}
             </strong>
-            . Are you sure you want to run a new analysis?
+            . It may already be analysed.
           </span>
+          <button
+            type="button"
+            onClick={() => setDuplicateIso(null)}
+            className="pill pill-sm"
+            disabled={pending}
+          >
+            Cancel
+          </button>
           <button
             type="button"
             onClick={runAnyway}
             className="pill pill-sm"
             disabled={pending}
           >
-            Run anyway →
+            Upload anyway
           </button>
         </div>
       )}
@@ -236,4 +416,10 @@ export function TranscriptUploadForm({ projectId }: { projectId: string }) {
       )}
     </form>
   );
+}
+
+function formatBytes(n: number) {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }

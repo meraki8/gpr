@@ -18,38 +18,37 @@ export async function acceptInvite(formData: FormData) {
 
   const invite = await db.projectInvite.findUnique({
     where: { token: parsed.data.token },
+    include: { project: { select: { deletedAt: true } } },
   });
-  if (!invite) throw new Error("Invite not found");
-  if (invite.acceptedAt) throw new Error("Invite already used");
-  if (invite.expiresAt < new Date()) throw new Error("Invite expired");
+  if (!invite || invite.project.deletedAt) throw new Error("Invite not found");
+  if (invite.expiresAt < new Date() && !invite.acceptedAt) {
+    throw new Error("Invite expired");
+  }
 
-  const existing = await db.projectMember.findUnique({
+  // Always ensure the member row exists — claimPendingInvites may have
+  // already run (or silently failed), so we check membership directly
+  // rather than relying on invite.acceptedAt as a proxy.
+  await db.projectMember.upsert({
     where: {
       projectId_userId: { projectId: invite.projectId, userId: user.id },
     },
+    create: {
+      projectId: invite.projectId,
+      userId: user.id,
+      role: "MEMBER",
+    },
+    update: {},
   });
 
-  if (existing) {
+  // Stamp the invite accepted if not already done.
+  if (!invite.acceptedAt) {
     await db.projectInvite.update({
       where: { id: invite.id },
       data: { acceptedAt: new Date() },
     });
-  } else {
-    await db.$transaction([
-      db.projectMember.create({
-        data: {
-          projectId: invite.projectId,
-          userId: user.id,
-          role: "MEMBER",
-        },
-      }),
-      db.projectInvite.update({
-        where: { id: invite.id },
-        data: { acceptedAt: new Date() },
-      }),
-    ]);
   }
 
   revalidatePath(`/projects/${invite.projectId}`);
+  revalidatePath(`/projects/${invite.projectId}/members`);
   redirect(`/projects/${invite.projectId}`);
 }

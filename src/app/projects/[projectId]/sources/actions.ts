@@ -5,13 +5,25 @@ import { z } from "zod";
 import { revalidatePath } from "next/cache";
 import { requireDbUser } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { fetchBranches, fetchCommits, fetchPullRequests } from "@/lib/github";
+import { fetchCommits, fetchPullRequests } from "@/lib/github";
+import { syncJiraProject } from "@/lib/jira-sync";
 import { KB_SOURCES, addKnowledgeEntries } from "@/lib/kb";
 import { recomputeMemberScores } from "@/lib/scoring";
 
 async function requireOwner(projectId: string, userId: string) {
   const member = await db.projectMember.findFirst({
     where: { projectId, userId, role: "OWNER" },
+  });
+  if (!member) throw new Error("FORBIDDEN");
+}
+
+// Any member of this project can configure / sync a source. Per
+// product philosophy: no unnecessary owner gates. Reserve owner-only
+// for destructive actions (removeGithubRepo, disconnectJira).
+async function requireMember(projectId: string, userId: string) {
+  const member = await db.projectMember.findFirst({
+    where: { projectId, userId, project: { deletedAt: null } },
+    select: { id: true },
   });
   if (!member) throw new Error("FORBIDDEN");
 }
@@ -38,7 +50,7 @@ export async function addGithubRepo(formData: FormData) {
   }
 
   const { projectId, repo } = parsed.data;
-  await requireOwner(projectId, user.id);
+  await requireMember(projectId, user.id);
 
   const existing = await db.contributionSource.findUnique({
     where: { projectId_sourceType: { projectId, sourceType: "GITHUB" } },
@@ -123,7 +135,7 @@ export async function setGithubUsername(formData: FormData) {
   }
 
   const { projectId, projectMemberId, externalId } = parsed.data;
-  await requireOwner(projectId, user.id);
+  await requireMember(projectId, user.id);
 
   const member = await db.projectMember.findFirst({
     where: { id: projectMemberId, projectId },
@@ -162,7 +174,7 @@ export async function syncGithubSource(formData: FormData) {
   if (!parsed.success) throw new Error("Invalid input");
 
   const { projectId } = parsed.data;
-  await requireOwner(projectId, user.id);
+  await requireMember(projectId, user.id);
 
   const source = await db.contributionSource.findUnique({
     where: { projectId_sourceType: { projectId, sourceType: "GITHUB" } },
@@ -190,24 +202,10 @@ export async function syncGithubSource(formData: FormData) {
   for (const repo of repos) {
     const [owner, name] = repo.split("/");
 
-    // Fetch commits from every branch and deduplicate by SHA so a commit
-    // that exists on multiple branches is only counted once.
-    const branches = await fetchBranches(owner, name);
-    const seenShas = new Set<string>();
-    const allCommits = [];
-    for (const branch of branches) {
-      const branchCommits = await fetchCommits(owner, name, since, branch.name);
-      for (const c of branchCommits) {
-        if (!seenShas.has(c.sha)) {
-          seenShas.add(c.sha);
-          allCommits.push(c);
-        }
-      }
-    }
-
-    if (allCommits.length > 0) {
+    const commits = await fetchCommits(owner, name, since);
+    if (commits.length > 0) {
       await db.contributionEvent.createMany({
-        data: allCommits.map((c) => ({
+        data: commits.map((c) => ({
           projectId,
           sourceId: source.id,
           sourceType: "GITHUB" as const,
@@ -230,7 +228,7 @@ export async function syncGithubSource(formData: FormData) {
       });
 
       await addKnowledgeEntries(
-        allCommits.map((c) => {
+        commits.map((c) => {
           const subject = c.commit.message.split("\n")[0].slice(0, 200);
           const body = c.commit.message.includes("\n")
             ? c.commit.message.split("\n").slice(1).join("\n").trim()
@@ -329,10 +327,27 @@ export async function syncGithubSource(formData: FormData) {
 
 // =================== JIRA ===================
 
+// Jira base URL must be the workspace root (e.g.
+// https://yourorg.atlassian.net). Normalises a few common mistakes
+// like trailing slashes or pasting a board URL.
+function normaliseJiraBaseUrl(input: string): string {
+  let url = input.trim().replace(/\/+$/, "");
+  // If they pasted a deeper URL, strip back to origin.
+  try {
+    const parsed = new URL(url);
+    url = `${parsed.protocol}//${parsed.host}`;
+  } catch {
+    throw new Error("Jira URL must look like https://yourorg.atlassian.net");
+  }
+  return url;
+}
+
 const JiraConnectSchema = z.object({
   projectId: z.string().min(1),
   jiraProjectKey: z.string().trim().min(1, "Jira project key required"),
-  jiraBoardUrl: z.string().trim().url("Enter a valid Jira board URL"),
+  jiraBaseUrl: z.string().trim().min(1, "Jira base URL required"),
+  jiraEmail: z.string().trim().email("Atlassian account email required"),
+  jiraApiToken: z.string().trim().min(1, "API token required"),
 });
 
 export async function connectJira(formData: FormData) {
@@ -340,25 +355,43 @@ export async function connectJira(formData: FormData) {
   const parsed = JiraConnectSchema.safeParse({
     projectId: formData.get("projectId"),
     jiraProjectKey: formData.get("jiraProjectKey"),
-    jiraBoardUrl: formData.get("jiraBoardUrl"),
+    jiraBaseUrl: formData.get("jiraBaseUrl"),
+    jiraEmail: formData.get("jiraEmail"),
+    jiraApiToken: formData.get("jiraApiToken"),
   });
   if (!parsed.success) {
     throw new Error(parsed.error.issues[0]?.message ?? "Invalid input");
   }
 
-  const { projectId, jiraProjectKey, jiraBoardUrl } = parsed.data;
-  await requireOwner(projectId, user.id);
+  const {
+    projectId,
+    jiraProjectKey,
+    jiraBaseUrl,
+    jiraEmail,
+    jiraApiToken,
+  } = parsed.data;
+  await requireMember(projectId, user.id);
+
+  const baseUrl = normaliseJiraBaseUrl(jiraBaseUrl);
 
   const existing = await db.contributionSource.findUnique({
     where: { projectId_sourceType: { projectId, sourceType: "JIRA" } },
   });
 
-  const webhookSecret = existing
-    ? (existing.configJson as { webhookSecret?: string }).webhookSecret ??
-      randomBytes(24).toString("hex")
-    : randomBytes(24).toString("hex");
+  // Preserve a webhook secret if one was set under the old Make.com flow,
+  // so users who already wired Make.com keep working.
+  const existingConfig =
+    (existing?.configJson as { webhookSecret?: string } | null) ?? {};
+  const webhookSecret =
+    existingConfig.webhookSecret ?? randomBytes(24).toString("hex");
 
-  const config = { projectKey: jiraProjectKey, boardUrl: jiraBoardUrl, webhookSecret };
+  const config = {
+    projectKey: jiraProjectKey.toUpperCase(),
+    baseUrl,
+    email: jiraEmail,
+    apiToken: jiraApiToken,
+    webhookSecret,
+  };
 
   if (existing) {
     await db.contributionSource.update({
@@ -371,6 +404,7 @@ export async function connectJira(formData: FormData) {
     });
   }
 
+  revalidatePath(`/projects/${projectId}/jira`);
   revalidatePath(`/projects/${projectId}/sources`);
 }
 
@@ -388,6 +422,7 @@ export async function disconnectJira(formData: FormData) {
     where: { projectId, sourceType: "JIRA" },
   });
 
+  revalidatePath(`/projects/${projectId}/jira`);
   revalidatePath(`/projects/${projectId}/sources`);
 }
 
@@ -409,7 +444,7 @@ export async function setJiraAccountId(formData: FormData) {
   }
 
   const { projectId, projectMemberId, externalId } = parsed.data;
-  await requireOwner(projectId, user.id);
+  await requireMember(projectId, user.id);
 
   const member = await db.projectMember.findFirst({
     where: { id: projectMemberId, projectId },
@@ -422,5 +457,31 @@ export async function setJiraAccountId(formData: FormData) {
     update: { externalId, verified: false },
   });
 
+  revalidatePath(`/projects/${projectId}/jira`);
   revalidatePath(`/projects/${projectId}/sources`);
+}
+
+const SyncJiraSchema = z.object({ projectId: z.string().min(1) });
+
+export async function syncJiraSource(formData: FormData) {
+  const user = await requireDbUser();
+  const parsed = SyncJiraSchema.safeParse({
+    projectId: formData.get("projectId"),
+  });
+  if (!parsed.success) throw new Error("Invalid input");
+
+  const { projectId } = parsed.data;
+  await requireMember(projectId, user.id);
+
+  const summary = await syncJiraProject(projectId);
+
+  if (summary.errors.length > 0 && summary.scanned === 0) {
+    throw new Error(summary.errors[0]);
+  }
+
+  revalidatePath(`/projects/${projectId}/jira`);
+  revalidatePath(`/projects/${projectId}`);
+  revalidatePath(`/projects/${projectId}/kb`);
+  revalidatePath(`/projects/${projectId}/leaderboard`);
+  revalidatePath(`/projects/${projectId}/members`);
 }

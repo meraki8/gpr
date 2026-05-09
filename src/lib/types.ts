@@ -80,7 +80,7 @@ export const MatchAnalysis = z.object({
   key_knowledge: z
     .array(KnowledgeFact)
     .describe(
-      "3-5 durable facts from this meeting worth remembering for future analyses: decisions made, commitments owned, scope changes, blockers. Skip pleasantries and idle chatter.",
+      "Durable facts from this meeting worth remembering — 5-15 typical, more if the transcript is rich. Anything where someone said they will do, bring, handle, or be responsible for something. Logistics decisions (venue, equipment, who brings what), scope changes, blockers, and commitments — even when phrased casually. Skip pleasantries and idle chatter only.",
     ),
 });
 

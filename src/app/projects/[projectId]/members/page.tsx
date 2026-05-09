@@ -7,6 +7,8 @@ import { Score } from "@/components/score";
 import { ResendInviteButton } from "@/components/resend-invite-button";
 import { requireDbUser } from "@/lib/auth";
 import { getNavContext, getProjectMembers } from "@/lib/data";
+import { InviteForm } from "@/components/invite-form";
+import { cancelInvite } from "../actions";
 
 export default async function MembersPage({
   params,
@@ -31,7 +33,11 @@ export default async function MembersPage({
       allGroups={nav.allGroups}
       activeGroup={nav.activeGroup}
       groupProjects={nav.groupProjects}
-      currentProject={{ id: project.id, name: project.name }}
+      currentProject={{
+        id: project.id,
+        name: project.name,
+        deadlineIso: project.deadline?.toISOString() ?? null,
+      }}
     >
       <main className="wrap-w" style={{ paddingBottom: 160 }}>
         <PageHead
@@ -41,6 +47,11 @@ export default async function MembersPage({
             viewerIsOwner
               ? "Click any row to see and adjust that member's capabilities. Owner permissions are locked on."
               : "Click your row to review your capabilities on this project."
+          }
+          right={
+            viewerIsOwner ? (
+              <InviteForm projectId={project.id} />
+            ) : null
           }
         />
 
@@ -232,7 +243,19 @@ export default async function MembersPage({
                       {daysLeft} day{daysLeft === 1 ? "" : "s"} left
                     </span>
                     {viewerIsOwner && (
-                      <ResendInviteButton inviteId={inv.id} />
+                      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                        <ResendInviteButton inviteId={inv.id} />
+                        <form action={cancelInvite}>
+                          <input type="hidden" name="inviteId" value={inv.id} />
+                          <button
+                            type="submit"
+                            className="lk-mute"
+                            style={{ fontSize: 12 }}
+                          >
+                            Cancel
+                          </button>
+                        </form>
+                      </div>
                     )}
                   </li>
                 );

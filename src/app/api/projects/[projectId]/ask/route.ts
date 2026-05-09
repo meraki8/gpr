@@ -85,7 +85,8 @@ export async function POST(
 
   const { messages } = (await req.json()) as { messages: UIMessage[] };
 
-  // Pull all KB entries — keep the order stable (newest-first) so the
+  // Pull all KB entries across every source (transcript / github /
+  // jira / manual) — keep the order stable (newest-first) so the
   // [KB-N] indices we hand the model match what the client component
   // captured at page load. If the project has grown beyond ~500
   // entries we cap; the AI can still cite the most recent ones.
@@ -105,49 +106,73 @@ export async function POST(
     },
   });
 
+  // Partition Jira tickets into their own section. The model handles
+  // tracked work items more accurately when they're presented as a
+  // discrete list with status labels, rather than mixed in with
+  // free-form transcript notes.
+  const jiraEntries = kbEntries.filter((e) => e.source === "jira");
+  const otherEntries = kbEntries.filter((e) => e.source !== "jira");
+
+  const formatEntry = (
+    e: (typeof kbEntries)[number],
+    tag: string,
+  ): string => {
+    const meta = [`source: ${e.source}`];
+    if (e.sourceTypeLabel) meta.push(`status: ${e.sourceTypeLabel}`);
+    if (e.assignedTo) meta.push(`assigned to: ${e.assignedTo}`);
+    if (e.targetDate)
+      meta.push(`target: ${e.targetDate.toISOString().slice(0, 10)}`);
+    meta.push(`created: ${e.createdAt.toISOString().slice(0, 10)}`);
+    // Truncate very long content per-entry so the prompt stays
+    // bounded — keeps total cost reasonable on big KBs.
+    const trimmed =
+      e.content.length > 800
+        ? `${e.content.slice(0, 800).trimEnd()}…`
+        : e.content;
+    return `${tag} ${e.title}\n  ${trimmed}\n  (${meta.join(" · ")})`;
+  };
+
   const kbBlock =
-    kbEntries.length === 0
+    otherEntries.length === 0
       ? "(no entries yet)"
-      : kbEntries
-          .map((e, i) => {
-            const idx = i + 1;
-            const meta = [`source: ${e.source}`];
-            if (e.sourceTypeLabel) meta.push(`label: ${e.sourceTypeLabel}`);
-            if (e.assignedTo) meta.push(`assigned to: ${e.assignedTo}`);
-            if (e.targetDate)
-              meta.push(`target: ${e.targetDate.toISOString().slice(0, 10)}`);
-            meta.push(
-              `created: ${e.createdAt.toISOString().slice(0, 10)}`,
-            );
-            // Truncate very long content per-entry so the prompt stays
-            // bounded — keeps total cost reasonable on big KBs.
-            const trimmed =
-              e.content.length > 800
-                ? `${e.content.slice(0, 800).trimEnd()}…`
-                : e.content;
-            return `[KB-${idx}] ${e.title}\n  ${trimmed}\n  (${meta.join(" · ")})`;
-          })
+      : otherEntries
+          .map((e, i) => formatEntry(e, `[KB-${i + 1}]`))
+          .join("\n\n");
+
+  const jiraBlock =
+    jiraEntries.length === 0
+      ? "(no Jira board connected, or no tickets synced yet)"
+      : jiraEntries
+          .map((e, i) => formatEntry(e, `[JIRA-${i + 1}]`))
           .join("\n\n");
 
   const system = [
     viewerBlock,
     "",
     `You are the GPR project assistant for "${member.project.name}".`,
-    `You only answer questions about THIS project, based ONLY on the project brief and knowledge base provided below — except for questions about the current user, where the YOU ARE TALKING TO block above is authoritative.`,
-    `If the answer is not in the project knowledge base, respond with exactly: "I do not have that information in this project yet."`,
-    `When you draw on a knowledge base entry, cite it inline using its tag in square brackets — e.g. [KB-3] or [KB-7]. Cite multiple if they apply.`,
+    `You only answer questions about THIS project, based ONLY on the project brief, the knowledge base, and the Jira tasks provided below — except for questions about the current user, where the YOU ARE TALKING TO block above is authoritative.`,
+    `If the answer is not in any of those sources, respond with exactly: "I do not have that information in this project yet."`,
+    `When you draw on a knowledge base entry cite it inline as [KB-N]. When you draw on a Jira task cite it as [JIRA-N]. Cite multiple if they apply.`,
     `Be concise. Don't speculate. Don't fabricate names, dates, or commitments. If a question is ambiguous, ask for clarification.`,
     "",
     "PROJECT BRIEF:",
     member.project.brief || "(no brief provided)",
     "",
-    "KNOWLEDGE BASE (newest first):",
+    "JIRA TASKS:",
+    "The following are tasks from the connected Jira board. Each entry's `status:` field tells you whether it is open, in progress, blocked, done, etc. Use this section to answer questions about Jira tickets, assignees, and ticket status.",
+    jiraBlock,
+    "",
+    "KNOWLEDGE BASE (newest first — transcripts, GitHub activity, manual notes):",
     kbBlock,
   ].join("\n");
 
   // Debug — visible in Vercel logs.
   console.log("[ask] projectId:", projectId);
-  console.log("[ask] kb entries fetched:", kbEntries.length);
+  console.log(
+    "[ask] kb entries fetched:",
+    kbEntries.length,
+    `(jira=${jiraEntries.length}, other=${otherEntries.length})`,
+  );
   console.log("[ask] model:", CHAT_MODEL);
   console.log(
     "[ask] system prompt (first 200 chars):",
