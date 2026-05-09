@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef } from "react";
 import { gsap } from "gsap";
 import { ScrollTrigger } from "gsap/ScrollTrigger";
 import { Wordmark } from "@/components/wordmark";
@@ -10,6 +10,15 @@ import { RefCard, type RefCardKind } from "@/components/ref-card";
 if (typeof window !== "undefined") {
   gsap.registerPlugin(ScrollTrigger);
 }
+
+// Next.js client components still server-render once for hydration,
+// and useLayoutEffect logs a warning during that pass. Falling back
+// to useEffect on the server keeps the runtime quiet while still
+// running synchronously before paint on the client — which is what
+// we need so GSAP can apply initial states before the user sees the
+// elements at full visibility.
+const useIsoLayoutEffect =
+  typeof window !== "undefined" ? useLayoutEffect : useEffect;
 
 type Props = {
   isSignedIn: boolean;
@@ -20,8 +29,18 @@ export function LandingClient({ isSignedIn }: Props) {
   const cta = isSignedIn ? "Open dashboard →" : "Start for free →";
   const ctaHref = isSignedIn ? "/dashboard" : "/sign-up";
 
-  useEffect(() => {
+  useIsoLayoutEffect(() => {
     if (!root.current) return;
+    if (typeof window !== "undefined") {
+      // Diagnostic — visible in devtools so we can confirm GSAP and
+      // the ScrollTrigger plugin are actually loaded in production.
+      console.log(
+        "[GPR] gsap",
+        gsap.version,
+        "scrollTrigger",
+        !!ScrollTrigger,
+      );
+    }
     const ctx = gsap.context(() => {
       // ===== HERO =====
       const heroTl = gsap.timeline({ defaults: { ease: "power3.out" } });
@@ -233,13 +252,45 @@ export function LandingClient({ isSignedIn }: Props) {
         repeat: -1,
       });
 
+      // Initial refresh in case anything was sized incorrectly while
+      // animations were being created.
+      ScrollTrigger.refresh();
+
       return () => {
         heroEl?.removeEventListener("mousemove", onMove);
         heroEl?.removeEventListener("mouseleave", onLeave);
       };
     }, root);
 
-    return () => ctx.revert();
+    // Fonts (Bricolage) and any deferred images can shift layout
+    // after first paint. Refresh ScrollTrigger when web fonts are
+    // ready and when the window finishes loading so triggers compute
+    // against the final rendered layout instead of a pre-font one.
+    let cancelled = false;
+    const refresh = () => {
+      if (cancelled) return;
+      ScrollTrigger.refresh();
+    };
+    if (typeof document !== "undefined" && document.fonts?.ready) {
+      document.fonts.ready.then(refresh).catch(() => {});
+    }
+    if (typeof window !== "undefined") {
+      window.addEventListener("load", refresh);
+    }
+    // One more on the next frame for good measure (handles cases
+    // where layout settles a frame after mount in production).
+    const raf = requestAnimationFrame(() => {
+      requestAnimationFrame(refresh);
+    });
+
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(raf);
+      if (typeof window !== "undefined") {
+        window.removeEventListener("load", refresh);
+      }
+      ctx.revert();
+    };
   }, []);
 
   const heroWords = [
