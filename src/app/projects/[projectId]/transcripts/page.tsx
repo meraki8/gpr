@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { AppShell } from "@/components/app-shell";
 import { PageHead } from "@/components/page-head";
+import { TranscriptUploadForm } from "@/components/transcript-upload-form";
 import { requireDbUser } from "@/lib/auth";
 import { getNavContext, getProjectTranscripts } from "@/lib/data";
 
@@ -33,108 +34,173 @@ export default async function TranscriptsPage({
               : `${project.transcripts.length} meeting${project.transcripts.length === 1 ? "" : "s"} on file.`
           }
           sub={
-            project.transcripts.length === 0
-              ? "Paste a transcript on the project overview page to file the first match report."
+            isOwner
+              ? "Drop a transcript and the ref drafts a Match Report. Key facts auto-flow into the Knowledge Base."
               : "Each one was the input to a match report. Newest first."
-          }
-          right={
-            isOwner ? (
-              <Link
-                href={`/projects/${project.id}#analyze`}
-                className="pill pill-ghost pill-sm"
-                style={{ textDecoration: "none" }}
-              >
-                + New transcript
-              </Link>
-            ) : null
           }
         />
 
-        <section>
-          {project.transcripts.map((t, i) => {
-            const report = t.matchReports[0];
-            const snippet = t.rawText
-              .replace(/\s+/g, " ")
-              .trim()
-              .slice(0, 220);
-            return (
-              <article
-                key={t.id}
-                className="fade-up"
+        {isOwner && (
+          <section
+            style={{
+              padding: "8px 0 56px",
+              borderBottom: "1px solid var(--line)",
+            }}
+          >
+            <div className="label" style={{ marginBottom: 18 }}>
+              New transcript
+            </div>
+            <TranscriptUploadForm projectId={project.id} />
+          </section>
+        )}
+
+        <section style={{ paddingTop: project.transcripts.length > 0 ? 40 : 0 }}>
+          {project.transcripts.length === 0 ? null : (
+            <>
+              <div
                 style={{
                   display: "grid",
-                  gridTemplateColumns: "180px 1fr 140px",
-                  gap: 32,
-                  padding: "26px 0",
+                  gridTemplateColumns:
+                    "180px 1fr 110px 110px 28px",
+                  gap: 24,
+                  padding: "16px 0",
+                  color: "var(--mute)",
+                  fontSize: 12,
+                  letterSpacing: "0.04em",
+                  textTransform: "uppercase",
                   borderBottom: "1px solid var(--line)",
-                  alignItems: "baseline",
-                  animationDelay: `${Math.min(i, 12) * 30}ms`,
                 }}
               >
-                <div>
-                  <div
-                    className="num"
-                    style={{ fontSize: 14, color: "var(--ink)" }}
-                  >
-                    {t.createdAt.toLocaleDateString(undefined, {
-                      weekday: "short",
-                      month: "short",
-                      day: "numeric",
-                    })}
-                  </div>
-                  <div
-                    className="mute-ink"
-                    style={{ fontSize: 12, marginTop: 4 }}
-                  >
-                    by {t.uploader.name ?? t.uploader.email}
-                  </div>
-                </div>
-                <div style={{ minWidth: 0 }}>
-                  <div
-                    className="body"
+                <span>When</span>
+                <span>Title</span>
+                <span style={{ textAlign: "right" }}>KB entries</span>
+                <span>Report</span>
+                <span />
+              </div>
+              {project.transcripts.map((t, i) => {
+                const report = t.matchReports[0];
+                const when = t.meetingAt ?? t.createdAt;
+                const fallbackTitle = `Meeting · ${when.toLocaleDateString(undefined, { month: "short", day: "numeric" })}`;
+                const display = t.title ?? fallbackTitle;
+                const snippet = t.rawText
+                  .replace(/\s+/g, " ")
+                  .trim()
+                  .slice(0, 200);
+                return (
+                  <article
+                    key={t.id}
+                    className="fade-up"
                     style={{
-                      fontSize: 14,
-                      color: "var(--ink-2)",
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      display: "-webkit-box",
-                      WebkitLineClamp: 3,
-                      WebkitBoxOrient: "vertical",
+                      display: "grid",
+                      gridTemplateColumns:
+                        "180px 1fr 110px 110px 28px",
+                      gap: 24,
+                      padding: "26px 0",
+                      borderBottom: "1px solid var(--line)",
+                      alignItems: "baseline",
+                      animationDelay: `${Math.min(i, 12) * 30}ms`,
                     }}
                   >
-                    {snippet}
-                    {t.rawText.length > snippet.length ? "…" : ""}
-                  </div>
-                  <div
-                    className="mute-ink num"
-                    style={{ fontSize: 11, marginTop: 6 }}
-                  >
-                    {t.rawText.length.toLocaleString()} chars · {t.source}
-                  </div>
-                </div>
-                <div style={{ textAlign: "right" }}>
-                  {report ? (
-                    <Link
-                      href={`/projects/${project.id}/reports/${report.id}`}
-                      className="lk-mute"
-                      style={{ fontSize: 13 }}
+                    <div>
+                      <div
+                        className="num"
+                        style={{ fontSize: 14, color: "var(--ink)" }}
+                      >
+                        {when.toLocaleDateString(undefined, {
+                          weekday: "short",
+                          month: "short",
+                          day: "numeric",
+                        })}
+                      </div>
+                      <div
+                        className="mute-ink num"
+                        style={{ fontSize: 11, marginTop: 4 }}
+                      >
+                        {when.toLocaleTimeString(undefined, {
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })}
+                        {" · "}
+                        by {t.uploader.name ?? t.uploader.email.split("@")[0]}
+                      </div>
+                    </div>
+                    <div style={{ minWidth: 0 }}>
+                      <div
+                        className="h-s"
+                        style={{
+                          fontSize: 17,
+                          marginBottom: 4,
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                        }}
+                        title={display}
+                      >
+                        {display}
+                      </div>
+                      <div
+                        className="body mute-ink"
+                        style={{
+                          fontSize: 13,
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          display: "-webkit-box",
+                          WebkitLineClamp: 2,
+                          WebkitBoxOrient: "vertical",
+                        }}
+                      >
+                        {snippet}
+                        {t.rawText.length > snippet.length ? "…" : ""}
+                      </div>
+                      <div
+                        className="mute-ink num"
+                        style={{ fontSize: 11, marginTop: 6 }}
+                      >
+                        {t.rawText.length.toLocaleString()} chars · {t.source}
+                      </div>
+                    </div>
+                    <div
+                      className="num"
+                      style={{
+                        textAlign: "right",
+                        fontSize: 18,
+                        color:
+                          t.kbEntryCount > 0
+                            ? "var(--ink)"
+                            : "var(--mute-2)",
+                      }}
                     >
-                      {report.status === "DRAFT"
-                        ? "View draft →"
-                        : "View report →"}
-                    </Link>
-                  ) : (
+                      {t.kbEntryCount || "—"}
+                    </div>
+                    <div>
+                      {report ? (
+                        <Link
+                          href={`/projects/${project.id}/reports/${report.id}`}
+                          className="lk-mute"
+                          style={{ fontSize: 13 }}
+                        >
+                          {report.status === "DRAFT" ? "Draft" : "View"}
+                        </Link>
+                      ) : (
+                        <span
+                          className="mute-ink"
+                          style={{ fontSize: 12 }}
+                        >
+                          —
+                        </span>
+                      )}
+                    </div>
                     <span
                       className="mute-ink"
-                      style={{ fontSize: 12 }}
+                      style={{ fontSize: 16, textAlign: "right" }}
                     >
-                      No report
+                      {report ? "→" : ""}
                     </span>
-                  )}
-                </div>
-              </article>
-            );
-          })}
+                  </article>
+                );
+              })}
+            </>
+          )}
         </section>
       </main>
     </AppShell>

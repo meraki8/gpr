@@ -127,26 +127,81 @@ export async function resendInvite(inviteId: string) {
   revalidatePath(`/projects/${invite.projectId}`);
 }
 
-const TranscriptSchema = z.object({
+const TranscriptInputSchema = z.object({
   projectId: z.string().min(1),
-  rawText: z
+  rawText: z.string(),
+  title: z
     .string()
     .trim()
-    .min(20, "Transcript looks too short to analyze"),
+    .max(200, "Title is too long")
+    .optional()
+    .transform((v) => (v && v.length > 0 ? v : undefined)),
+  meetingAt: z
+    .string()
+    .trim()
+    .optional()
+    .transform((v) => (v && v.length > 0 ? v : undefined)),
 });
+
+async function readUploadedTranscriptFile(file: File): Promise<string> {
+  const buf = new Uint8Array(await file.arrayBuffer());
+  const isPdf =
+    file.type === "application/pdf" ||
+    file.name.toLowerCase().endsWith(".pdf");
+  if (isPdf) {
+    // Lazy-import unpdf so the heavy pdfjs build only loads when a
+    // PDF actually shows up.
+    const { extractText, getDocumentProxy } = await import("unpdf");
+    const pdf = await getDocumentProxy(buf);
+    const { text } = await extractText(pdf, { mergePages: true });
+    return text;
+  }
+  // Treat anything else as plain text — covers .txt, .md, and any
+  // mistakenly-typed file the user pastes into the upload field.
+  return new TextDecoder().decode(buf);
+}
 
 export async function analyzeTranscript(formData: FormData) {
   const user = await requireDbUser();
 
-  const parsed = TranscriptSchema.safeParse({
+  const fileEntry = formData.get("file");
+  const file =
+    fileEntry instanceof File && fileEntry.size > 0 ? fileEntry : null;
+
+  let rawText = (formData.get("rawText") ?? "").toString();
+  if (file) {
+    const fromFile = await readUploadedTranscriptFile(file);
+    // If the user pasted AND uploaded, concatenate paste-first so the
+    // user's annotations come before the file body.
+    rawText = rawText.trim()
+      ? `${rawText.trim()}\n\n${fromFile}`
+      : fromFile;
+  }
+  rawText = rawText.trim();
+
+  if (rawText.length < 20) {
+    throw new Error("Transcript looks too short to analyze");
+  }
+
+  const parsed = TranscriptInputSchema.safeParse({
     projectId: formData.get("projectId"),
-    rawText: formData.get("rawText"),
+    rawText,
+    title: formData.get("title") ?? undefined,
+    meetingAt: formData.get("meetingAt") ?? undefined,
   });
   if (!parsed.success) {
     throw new Error(parsed.error.issues[0]?.message ?? "Invalid input");
   }
 
-  const { projectId, rawText } = parsed.data;
+  const { projectId, title } = parsed.data;
+  // datetime-local sends "YYYY-MM-DDTHH:MM" — Date constructor parses
+  // it in local time, which is what the user means.
+  const meetingAt = parsed.data.meetingAt
+    ? new Date(parsed.data.meetingAt)
+    : null;
+  if (meetingAt && Number.isNaN(meetingAt.getTime())) {
+    throw new Error("Invalid meeting timestamp");
+  }
 
   const project = await db.project.findFirst({
     where: {
@@ -166,7 +221,9 @@ export async function analyzeTranscript(formData: FormData) {
       projectId,
       uploadedBy: user.id,
       rawText,
-      source: "PASTE",
+      title: title ?? null,
+      meetingAt,
+      source: file ? "FILE" : "PASTE",
     },
   });
 
@@ -205,6 +262,12 @@ export async function analyzeTranscript(formData: FormData) {
     `Name: ${project.name}`,
     `Brief: ${project.brief}`,
     "",
+    "MEETING:",
+    title ? `Title: ${title}` : "Title: (not provided — infer from content)",
+    meetingAt
+      ? `When: ${meetingAt.toISOString()}`
+      : "When: (not provided)",
+    "",
     "PROJECT KNOWLEDGE (recent, newest first — use as background, do not re-extract):",
     kbBlock,
     "",
@@ -240,13 +303,14 @@ export async function analyzeTranscript(formData: FormData) {
 
   // 5. Persist Match Report + nested Member Reports + draft Cards.
   const now = new Date();
+  const reportPeriod = meetingAt ?? now;
   const matchReport = await db.matchReport.create({
     data: {
       projectId,
       transcriptId: transcript.id,
       summary: analysis.summary,
-      periodStart: now,
-      periodEnd: now,
+      periodStart: reportPeriod,
+      periodEnd: reportPeriod,
       status: "DRAFT",
       memberReports: {
         create: analysis.members.map((m) => ({
@@ -294,5 +358,7 @@ export async function analyzeTranscript(formData: FormData) {
 
   revalidatePath(`/projects/${projectId}`);
   revalidatePath(`/projects/${projectId}/kb`);
+  revalidatePath(`/projects/${projectId}/transcripts`);
+  revalidatePath(`/projects/${projectId}/reports`);
   redirect(`/projects/${projectId}/reports/${matchReport.id}`);
 }

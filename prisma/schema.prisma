@@ -44,6 +44,7 @@ enum TaskSource {
   MANUAL
   TRANSCRIPT
   GITHUB
+  JIRA
 }
 
 enum CardType {
@@ -62,6 +63,7 @@ enum ContributionSourceType {
   GITHUB
   TRANSCRIPT
   MANUAL
+  JIRA
 }
 
 // =================== USERS, GROUPS, PROJECTS ===================
@@ -208,6 +210,11 @@ model Transcript {
   id         String           @id @default(cuid())
   projectId  String
   uploadedBy String
+  // Optional human-set title and the actual time the meeting occurred
+  // (vs createdAt = upload time). Both nullable so legacy rows keep
+  // working — the page falls back to a date-based label.
+  title      String?
+  meetingAt  DateTime?
   rawText    String           @db.Text
   blobUrl    String?
   source     TranscriptSource

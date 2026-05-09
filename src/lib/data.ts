@@ -304,7 +304,7 @@ export async function getProjectTranscripts(projectId: string) {
     include: {
       group: true,
       transcripts: {
-        orderBy: { createdAt: "desc" },
+        orderBy: [{ meetingAt: "desc" }, { createdAt: "desc" }],
         include: {
           uploader: true,
           matchReports: { select: { id: true, status: true } },
@@ -314,8 +314,44 @@ export async function getProjectTranscripts(projectId: string) {
     },
   });
   if (!project) notFound();
+
+  // For each transcript, count KB entries derived from its report.
+  // KB entries from analyzeTranscript have sourceRefId of the form
+  // "<reportId>:<idx>", so a startsWith filter scoped to source =
+  // "transcript" gives an exact count per report.
+  const reportIds = project.transcripts
+    .map((t) => t.matchReports[0]?.id)
+    .filter((id): id is string => Boolean(id));
+
+  const kbCountsByReport = new Map<string, number>();
+  if (reportIds.length > 0) {
+    const allEntries = await db.knowledgeEntry.findMany({
+      where: {
+        projectId,
+        source: "transcript",
+        OR: reportIds.map((id) => ({ sourceRefId: { startsWith: `${id}:` } })),
+      },
+      select: { sourceRefId: true },
+    });
+    for (const entry of allEntries) {
+      const refId = entry.sourceRefId ?? "";
+      const reportId = refId.split(":")[0];
+      kbCountsByReport.set(
+        reportId,
+        (kbCountsByReport.get(reportId) ?? 0) + 1,
+      );
+    }
+  }
+
+  const transcripts = project.transcripts.map((t) => ({
+    ...t,
+    kbEntryCount: t.matchReports[0]
+      ? (kbCountsByReport.get(t.matchReports[0].id) ?? 0)
+      : 0,
+  }));
+
   const isOwner = project.members[0]?.role === "OWNER";
-  return { project, isOwner };
+  return { project: { ...project, transcripts }, isOwner };
 }
 
 export async function getProjectReportsList(projectId: string) {
