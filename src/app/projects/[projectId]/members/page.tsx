@@ -43,6 +43,24 @@ export default async function MembersPage({
               ? "Click any row to see and adjust that member's capabilities. Owner permissions are locked on."
               : "Click your row to review your capabilities on this project."
           }
+          right={
+            viewerIsOwner ? (
+              <form action={inviteMember} style={{ display: "flex", gap: 10 }}>
+                <input type="hidden" name="projectId" value={project.id} />
+                <input
+                  type="email"
+                  name="email"
+                  placeholder="teammate@example.com"
+                  required
+                  className="field"
+                  style={{ width: 240 }}
+                />
+                <button type="submit" className="pill pill-sm">
+                  Invite →
+                </button>
+              </form>
+            ) : null
+          }
         />
 
         <section>
@@ -185,33 +203,8 @@ export default async function MembersPage({
           })}
         </section>
 
-        {viewerIsOwner && (
-          <section style={{ paddingTop: 80, maxWidth: 720 }}>
-            <div className="label" style={{ marginBottom: 24 }}>
-              Invite a member
-            </div>
-            <form action={inviteMember} style={{ display: "flex", gap: 10 }}>
-              <input type="hidden" name="projectId" value={project.id} />
-              <input
-                type="email"
-                name="email"
-                placeholder="teammate@example.com"
-                required
-                className="field"
-                style={{ flex: 1 }}
-              />
-              <button type="submit" className="pill pill-sm">
-                Send →
-              </button>
-            </form>
-            <p className="mute-ink" style={{ fontSize: 13, marginTop: 10 }}>
-              Recipient gets an email with a 7-day accept link.
-            </p>
-          </section>
-        )}
-
         {project.invites.length > 0 && (
-          <section style={{ paddingTop: 56, maxWidth: 720 }}>
+          <section style={{ paddingTop: 80, maxWidth: 720 }}>
             <div
               className="label"
               style={{ marginBottom: 18, color: "var(--mute)" }}
