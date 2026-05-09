@@ -69,10 +69,46 @@ export async function getProject(projectId: string) {
         take: 8,
         include: { user: true },
       },
+      contributionEvents: {
+        orderBy: { occurredAt: "desc" },
+        take: 12,
+      },
+      contributionSources: true,
     },
   });
   if (!project) notFound();
   return project;
+}
+
+export async function getProjectSources(projectId: string) {
+  const user = await requireDbUser();
+
+  const member = await db.projectMember.findFirst({
+    where: { projectId, userId: user.id },
+    select: { role: true },
+  });
+  if (!member) notFound();
+
+  const project = await db.project.findFirst({
+    where: { id: projectId, deletedAt: null },
+    include: {
+      members: {
+        include: {
+          user: true,
+          sourceIdentities: true,
+        },
+        orderBy: { joinedAt: "asc" },
+      },
+      contributionSources: { orderBy: { createdAt: "asc" } },
+      contributionEvents: {
+        orderBy: { occurredAt: "desc" },
+        take: 30,
+      },
+    },
+  });
+  if (!project) notFound();
+
+  return { project, isOwner: member.role === "OWNER" };
 }
 
 export async function getMatchReport(reportId: string) {

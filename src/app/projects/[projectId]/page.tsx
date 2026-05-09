@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { AppHeader } from "@/components/app-header";
+import { requireDbUser } from "@/lib/auth";
 import { getProject } from "@/lib/data";
 import { analyzeTranscript, inviteMember } from "./actions";
 
@@ -9,7 +10,16 @@ export default async function ProjectPage({
   params: Promise<{ projectId: string }>;
 }) {
   const { projectId } = await params;
-  const project = await getProject(projectId);
+  const [user, project] = await Promise.all([
+    requireDbUser(),
+    getProject(projectId),
+  ]);
+  const isOwner = project.members.some(
+    (m) => m.userId === user.id && m.role === "OWNER",
+  );
+  const hasGithubSource = project.contributionSources.some(
+    (s) => s.sourceType === "GITHUB",
+  );
 
   const daysUntilDeadline = project.deadline
     ? Math.ceil(
@@ -248,18 +258,78 @@ export default async function ProjectPage({
         )}
 
         <div className="border-t border-white/10 pt-8 mt-12">
-          <h2 className="text-sm font-mono uppercase tracking-widest text-white/60 mb-4">
-            Sprint progress
-          </h2>
-          <div className="border border-dashed border-white/20 px-6 py-12 text-center">
-            <p className="font-mono text-xs tracking-[0.3em] uppercase text-white/40 mb-2">
-              Phase 7
-            </p>
-            <p className="text-white/60">
-              GitHub commits &amp; PRs feed in here once a contribution
-              source is connected.
-            </p>
+          <div className="flex items-baseline justify-between mb-4 gap-3 flex-wrap">
+            <h2 className="text-sm font-mono uppercase tracking-widest text-white/60">
+              Sprint progress
+            </h2>
+            {isOwner && (
+              <Link
+                href={`/projects/${project.id}/sources`}
+                className="font-mono text-xs uppercase tracking-widest text-white/50 hover:text-white"
+              >
+                Manage sources →
+              </Link>
+            )}
           </div>
+          {project.contributionEvents.length === 0 ? (
+            <div className="border border-dashed border-white/20 px-6 py-10 text-center">
+              <p className="text-white/60 mb-3">
+                {hasGithubSource
+                  ? "GitHub source configured. Hit “Sync now” on the sources page to pull commits."
+                  : "Connect a GitHub repo to start tracking commits and PRs."}
+              </p>
+              {isOwner && (
+                <Link
+                  href={`/projects/${project.id}/sources`}
+                  className="inline-block bg-white text-black px-4 py-2 font-medium text-sm"
+                >
+                  {hasGithubSource ? "Open sources" : "Connect GitHub"}
+                </Link>
+              )}
+            </div>
+          ) : (
+            <ul className="grid gap-1 font-mono text-sm">
+              {project.contributionEvents.map((e) => {
+                const payload = e.payloadJson as {
+                  login?: string;
+                  message?: string;
+                  title?: string;
+                  url?: string;
+                  repo?: string;
+                };
+                const matchedMember = e.userId
+                  ? project.members.find((m) => m.userId === e.userId)
+                  : null;
+                const displayName = matchedMember
+                  ? (matchedMember.user.name ?? matchedMember.user.email)
+                  : (payload.login ?? "unknown");
+                return (
+                  <li
+                    key={e.id}
+                    className="flex items-baseline gap-3 text-white/70 border-b border-white/5 py-2"
+                  >
+                    <span className="text-white/30 text-xs w-20 shrink-0">
+                      {e.occurredAt.toLocaleDateString()}
+                    </span>
+                    <span className="text-[#DC2626] uppercase text-xs w-24 shrink-0">
+                      {e.eventType}
+                    </span>
+                    <span className="text-white/60 shrink-0 truncate max-w-[200px]">
+                      {displayName}
+                    </span>
+                    <a
+                      href={payload.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="truncate text-white/80 hover:text-white"
+                    >
+                      {payload.title ?? payload.message ?? "—"}
+                    </a>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
         </div>
       </section>
     </main>
