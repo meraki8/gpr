@@ -8,7 +8,67 @@ import {
   connectJira,
   disconnectJira,
   setJiraAccountId,
+  syncJiraSource,
 } from "../sources/actions";
+
+type JiraConfig = {
+  projectKey?: string;
+  baseUrl?: string;
+  email?: string;
+  apiToken?: string;
+  webhookSecret?: string;
+};
+
+type AcJudgement = {
+  acText: string;
+  selfReportedDone: boolean | null;
+  aiThinksDone: boolean;
+  reason: string;
+};
+
+function isPlausibleAc(text: string): boolean {
+  const cleaned = text.trim().replace(/\s+/g, " ");
+  const lower = cleaned.toLowerCase();
+
+  if (cleaned.length < 12) return false;
+  if (cleaned.split(/\s+/).length < 3) return false;
+  if (/^[\d\s+\-*/=().]+$/.test(cleaned)) return false;
+  if (/^(yes|no|maybe|true|false|n\/a|done|todo)$/i.test(cleaned)) {
+    return false;
+  }
+  if (
+    /figment of my imagination/i.test(cleaned) ||
+    /^the project exists\.?$/i.test(cleaned)
+  ) {
+    return false;
+  }
+
+  const hasTestableVerb =
+    /\b(can|shows?|displays?|returns?|creates?|updates?|saves?|rejects?|accepts?|sends?|receives?|loads?|persists?|appears?|opens?|closes?|prevents?|validates?|passes?|fails?|syncs?|maps?|connects?|disconnects?|completes?)\b/.test(
+      lower,
+    );
+  const hasProductSubject =
+    /\b(user|admin|member|team|project|page|screen|button|form|api|webhook|jira|ticket|issue|sprint|leaderboard|auth|login|sign in|session|error|app|data|card|status|comment)\b/.test(
+      lower,
+    );
+
+  return hasTestableVerb && hasProductSubject;
+}
+
+function maskToken(token: string | undefined): string {
+  if (!token) return "—";
+  if (token.length <= 8) return "••••";
+  return `${token.slice(0, 4)}••••${token.slice(-4)}`;
+}
+
+const EVENT_LABELS: Record<string, { label: string; color: string }> = {
+  issue_created: { label: "created", color: "var(--mute)" },
+  issue_updated: { label: "updated", color: "var(--ink)" },
+  issue_completed: { label: "completed", color: "#10b981" },
+  issue_completed_ac_failed: { label: "done · AC failed", color: "var(--red)" },
+  issue_overdue: { label: "overdue", color: "var(--red)" },
+  issue_stale: { label: "stale", color: "var(--mute-2)" },
+};
 
 export default async function JiraPage({
   params,
@@ -24,19 +84,20 @@ export default async function JiraPage({
     getNavContext({ projectId }),
     getProjectSources(projectId, page, "JIRA"),
   ]);
-  const { project, hasNextPage } = sources;
+  const { project, isOwner, hasNextPage } = sources;
 
   const jiraSource = project.contributionSources.find(
     (s) => s.sourceType === "JIRA",
   );
-  const jiraConfig = jiraSource?.configJson as {
-    projectKey?: string;
-    boardUrl?: string;
-    webhookSecret?: string;
-  } | null;
-  const webhookUrl = jiraSource
-    ? `${getBaseUrl()}/api/webhooks/jira?projectId=${projectId}&secret=${jiraConfig?.webhookSecret ?? ""}`
-    : null;
+  const jiraConfig = (jiraSource?.configJson as JiraConfig | null) ?? null;
+  const isConnectedWithApi = Boolean(
+    jiraConfig?.baseUrl && jiraConfig?.email && jiraConfig?.apiToken,
+  );
+
+  const webhookUrl =
+    jiraSource && jiraConfig?.webhookSecret
+      ? `${getBaseUrl()}/api/webhooks/jira?projectId=${projectId}&secret=${jiraConfig.webhookSecret}`
+      : null;
 
   return (
     <AppShell
@@ -54,7 +115,7 @@ export default async function JiraPage({
         <PageHead
           eyebrow={`Jira · ${project.name}`}
           title="Jira board."
-          sub="Connect Jira via Make.com so overdue or stale tickets fire events into the ref's evidence pile."
+          sub="GPR pulls your Jira issues, watches for status transitions, overdue tickets and acceptance-criteria misses, and updates the leaderboard automatically."
         />
 
         <section
@@ -76,47 +137,112 @@ export default async function JiraPage({
             <h2 className="h-m" style={{ margin: 0 }}>
               Jira
             </h2>
-            {jiraSource && (
-              <form action={disconnectJira}>
-                <input type="hidden" name="projectId" value={projectId} />
-                <button type="submit" className="lk-mute" style={{ fontSize: 12 }}>
-                  Disconnect
-                </button>
-              </form>
-            )}
+            <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+              {isOwner && isConnectedWithApi && (
+                <form action={syncJiraSource}>
+                  <input type="hidden" name="projectId" value={projectId} />
+                  <button type="submit" className="pill pill-red">
+                    Sync now →
+                  </button>
+                </form>
+              )}
+              {isOwner && jiraSource && (
+                <form action={disconnectJira}>
+                  <input type="hidden" name="projectId" value={projectId} />
+                  <button type="submit" className="lk-mute" style={{ fontSize: 12 }}>
+                    Disconnect
+                  </button>
+                </form>
+              )}
+            </div>
           </div>
 
-          {!jiraSource ? (
+          {jiraSource?.lastSyncedAt && (
+            <p className="mute-ink" style={{ fontSize: 13, marginTop: -16, marginBottom: 32 }}>
+              Last synced{" "}
+              {jiraSource.lastSyncedAt.toLocaleString("en-NZ", {
+                timeZone: "Pacific/Auckland",
+                month: "short",
+                day: "numeric",
+                hour: "2-digit",
+                minute: "2-digit",
+                hour12: true,
+              })}
+            </p>
+          )}
+
+          {!isConnectedWithApi ? (
             <>
               <p className="body mute-ink" style={{ marginBottom: 32, fontSize: 14 }}>
-                Connect your Jira board. GPR will generate a webhook URL you paste into Make.com — Make.com watches Jira and fires events to GPR automatically.
+                Connect your Jira project with an Atlassian API token. GPR pulls
+                issues directly — no Make.com setup required. Generate a token at{" "}
+                <a
+                  href="https://id.atlassian.com/manage-profile/security/api-tokens"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="lk"
+                >
+                  id.atlassian.com → Security → API tokens
+                </a>
+                .
               </p>
               <form
                 action={connectJira}
-                style={{ display: "grid", gap: 12, maxWidth: 480 }}
+                style={{ display: "grid", gap: 14, maxWidth: 560 }}
               >
                 <input type="hidden" name="projectId" value={projectId} />
                 <div>
-                  <div className="label" style={{ marginBottom: 8 }}>Jira project key</div>
-                  <input
-                    type="text"
-                    name="jiraProjectKey"
-                    placeholder="e.g. GPR"
-                    required
-                    className="field num"
-                    style={{ width: "100%" }}
-                  />
-                </div>
-                <div>
-                  <div className="label" style={{ marginBottom: 8 }}>Jira board URL</div>
+                  <div className="label" style={{ marginBottom: 8 }}>Jira workspace URL</div>
                   <input
                     type="url"
-                    name="jiraBoardUrl"
-                    placeholder="https://yourorg.atlassian.net/jira/software/projects/GPR/boards/1"
+                    name="jiraBaseUrl"
+                    placeholder="https://yourorg.atlassian.net"
+                    defaultValue={jiraConfig?.baseUrl ?? ""}
                     required
                     className="field"
                     style={{ width: "100%" }}
                   />
+                </div>
+                <div style={{ display: "grid", gap: 14, gridTemplateColumns: "1fr 1fr" }}>
+                  <div>
+                    <div className="label" style={{ marginBottom: 8 }}>Project key</div>
+                    <input
+                      type="text"
+                      name="jiraProjectKey"
+                      placeholder="GPR"
+                      defaultValue={jiraConfig?.projectKey ?? ""}
+                      required
+                      className="field num"
+                      style={{ width: "100%", textTransform: "uppercase" }}
+                    />
+                  </div>
+                  <div>
+                    <div className="label" style={{ marginBottom: 8 }}>Atlassian email</div>
+                    <input
+                      type="email"
+                      name="jiraEmail"
+                      placeholder="you@example.com"
+                      defaultValue={jiraConfig?.email ?? ""}
+                      required
+                      className="field"
+                      style={{ width: "100%" }}
+                    />
+                  </div>
+                </div>
+                <div>
+                  <div className="label" style={{ marginBottom: 8 }}>API token</div>
+                  <input
+                    type="password"
+                    name="jiraApiToken"
+                    placeholder="Paste your Atlassian API token"
+                    required
+                    className="field num"
+                    style={{ width: "100%" }}
+                  />
+                  <p className="mute-ink" style={{ fontSize: 12, marginTop: 6 }}>
+                    Stored per-project. Used for read-only access to issues, status,
+                    and comments.
+                  </p>
                 </div>
                 <button type="submit" className="pill pill-sm" style={{ justifySelf: "start" }}>
                   Connect →
@@ -126,64 +252,56 @@ export default async function JiraPage({
           ) : (
             <>
               <div style={{ display: "grid", gap: 24, marginBottom: 48 }}>
-                <div>
-                  <div className="label" style={{ marginBottom: 6 }}>Project key</div>
-                  <span className="num" style={{ fontSize: 15 }}>{jiraConfig?.projectKey}</span>
-                  {jiraConfig?.boardUrl && (
+                <div style={{ display: "grid", gap: 14, gridTemplateColumns: "repeat(3, 1fr)" }}>
+                  <div>
+                    <div className="label" style={{ marginBottom: 6 }}>Project key</div>
+                    <span className="num" style={{ fontSize: 15 }}>{jiraConfig?.projectKey}</span>
+                  </div>
+                  <div>
+                    <div className="label" style={{ marginBottom: 6 }}>Workspace</div>
                     <a
-                      href={jiraConfig.boardUrl}
+                      href={jiraConfig?.baseUrl}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="lk-mute"
-                      style={{ marginLeft: 16, fontSize: 13 }}
+                      className="lk-mute num"
+                      style={{ fontSize: 13 }}
                     >
-                      Open board ↗
+                      {jiraConfig?.baseUrl?.replace(/^https?:\/\//, "")}
                     </a>
-                  )}
+                  </div>
+                  <div>
+                    <div className="label" style={{ marginBottom: 6 }}>API token</div>
+                    <span className="num mute-ink" style={{ fontSize: 13 }}>
+                      {maskToken(jiraConfig?.apiToken)}
+                    </span>
+                  </div>
                 </div>
 
                 <div>
                   <div className="label" style={{ marginBottom: 8 }}>
-                    Make.com webhook URL
+                    Acceptance criteria format
                   </div>
-                  <p className="body mute-ink" style={{ fontSize: 13, marginBottom: 10, marginTop: 0 }}>
-                    Paste this into Make.com's HTTP module. In Make.com: Jira trigger → HTTP (POST) → map{" "}
-                    <code style={{ fontSize: 12 }}>event_type</code>,{" "}
-                    <code style={{ fontSize: 12 }}>issue_key</code>,{" "}
-                    <code style={{ fontSize: 12 }}>issue_id</code>,{" "}
-                    <code style={{ fontSize: 12 }}>summary</code>,{" "}
-                    <code style={{ fontSize: 12 }}>status</code>,{" "}
-                    <code style={{ fontSize: 12 }}>assignee_account_id</code>,{" "}
-                    <code style={{ fontSize: 12 }}>due_date</code>,{" "}
-                    <code style={{ fontSize: 12 }}>url</code>.
+                  <p className="body mute-ink" style={{ fontSize: 13, margin: 0, marginBottom: 10 }}>
+                    Add this to any Jira issue&apos;s description. When the issue moves
+                    to Done, GPR uses Claude to judge each criterion against the
+                    description and recent comments. Misses become yellow cards.
                   </p>
-                  <div
+                  <pre
                     style={{
                       background: "var(--surface-2)",
                       border: "1px solid var(--line)",
                       borderRadius: 6,
-                      padding: "10px 14px",
+                      padding: "12px 14px",
                       fontFamily: "monospace",
                       fontSize: 12,
-                      wordBreak: "break-all",
+                      margin: 0,
+                      whiteSpace: "pre-wrap",
                       color: "var(--ink)",
                     }}
-                  >
-                    {webhookUrl}
-                  </div>
-                </div>
-
-                <div>
-                  <div className="label" style={{ marginBottom: 8 }}>
-                    Supported event_type values
-                  </div>
-                  <ul className="body mute-ink" style={{ fontSize: 13, margin: 0, paddingLeft: 20, lineHeight: 1.8 }}>
-                    <li><code style={{ fontSize: 12 }}>issue_created</code> — new ticket</li>
-                    <li><code style={{ fontSize: 12 }}>issue_updated</code> — status or assignee changed</li>
-                    <li><code style={{ fontSize: 12 }}>issue_completed</code> — ticket resolved/done</li>
-                    <li><code style={{ fontSize: 12 }}>issue_overdue</code> — past due date → auto yellow card</li>
-                    <li><code style={{ fontSize: 12 }}>issue_stale</code> — no activity for X days</li>
-                  </ul>
+                  >{`## Acceptance Criteria
+[ ] User can sign in with email + password
+[x] Invalid credentials show an error
+[ ] Session persists for 7 days`}</pre>
                 </div>
               </div>
 
@@ -219,29 +337,66 @@ export default async function JiraPage({
                           {m.user.email}
                         </div>
                       </div>
-                      <form
-                        action={setJiraAccountId}
-                        style={{ display: "flex", gap: 8, alignItems: "center" }}
-                      >
-                        <input type="hidden" name="projectId" value={projectId} />
-                        <input type="hidden" name="projectMemberId" value={m.id} />
-                        <input
-                          type="text"
-                          name="externalId"
-                          placeholder="accountId"
-                          defaultValue={identity?.externalId ?? ""}
-                          required
-                          className="field num"
-                          style={{ width: 220, padding: "8px 12px" }}
-                        />
-                        <button type="submit" className="pill pill-ghost pill-sm">
-                          Save
-                        </button>
-                      </form>
+                      {isOwner ? (
+                        <form
+                          action={setJiraAccountId}
+                          style={{ display: "flex", gap: 8, alignItems: "center" }}
+                        >
+                          <input type="hidden" name="projectId" value={projectId} />
+                          <input type="hidden" name="projectMemberId" value={m.id} />
+                          <input
+                            type="text"
+                            name="externalId"
+                            placeholder="accountId"
+                            defaultValue={identity?.externalId ?? ""}
+                            required
+                            className="field num"
+                            style={{ width: 220, padding: "8px 12px" }}
+                          />
+                          <button type="submit" className="pill pill-ghost pill-sm">
+                            Save
+                          </button>
+                        </form>
+                      ) : (
+                        <span className="num mute-ink" style={{ fontSize: 13 }}>
+                          {identity?.externalId ?? "—"}
+                        </span>
+                      )}
                     </li>
                   );
                 })}
               </ul>
+
+              {webhookUrl && (
+                <details style={{ marginTop: 56 }}>
+                  <summary
+                    className="lk-mute"
+                    style={{ fontSize: 12, cursor: "pointer" }}
+                  >
+                    Advanced: Make.com webhook (legacy fallback)
+                  </summary>
+                  <p className="body mute-ink" style={{ fontSize: 13, marginTop: 12 }}>
+                    Most users should ignore this — the API token connection above
+                    handles everything. The webhook endpoint is here for users who
+                    already have a Make.com scenario configured.
+                  </p>
+                  <div
+                    style={{
+                      background: "var(--surface-2)",
+                      border: "1px solid var(--line)",
+                      borderRadius: 6,
+                      padding: "10px 14px",
+                      fontFamily: "monospace",
+                      fontSize: 12,
+                      wordBreak: "break-all",
+                      color: "var(--ink)",
+                      marginTop: 8,
+                    }}
+                  >
+                    {webhookUrl}
+                  </div>
+                </details>
+              )}
             </>
           )}
         </section>
@@ -265,7 +420,11 @@ export default async function JiraPage({
           </div>
           {project.contributionEvents.length === 0 ? (
             <p className="body mute-ink" style={{ margin: 0 }}>
-              {page > 1 ? "No more events." : "No Jira events yet. Connect a Jira board and run the Make.com scenario."}
+              {page > 1
+                ? "No more events."
+                : isConnectedWithApi
+                  ? "No Jira events yet. Click “Sync now” to pull issues from Jira."
+                  : "No Jira events yet. Connect Jira above to start syncing."}
             </p>
           ) : (
             project.contributionEvents.map((e, i) => {
@@ -274,57 +433,136 @@ export default async function JiraPage({
                 issueKey?: string;
                 assigneeDisplayName?: string;
                 url?: string;
+                status?: string;
+                previousStatus?: string;
+                acAllMet?: boolean;
+                acSummary?: string;
+                acJudgements?: AcJudgement[];
               };
+              const meta = EVENT_LABELS[e.eventType] ?? {
+                label: e.eventType,
+                color: "var(--mute)",
+              };
+              const showAc =
+                e.eventType === "issue_completed" ||
+                e.eventType === "issue_completed_ac_failed";
+              const acJudgements = (payload.acJudgements ?? []).filter((j) =>
+                isPlausibleAc(j.acText),
+              );
+              const acAllMet =
+                acJudgements.length === 0 ||
+                acJudgements.every((j) => j.aiThinksDone);
+              const eventMeta =
+                e.eventType === "issue_completed_ac_failed" &&
+                acJudgements.length === 0
+                  ? { label: "completed", color: "#10b981" }
+                  : meta;
               return (
                 <div
                   key={e.id}
                   className="fade-up"
                   style={{
-                    display: "grid",
-                    gridTemplateColumns: "100px 100px 160px 1fr",
-                    gap: 32,
                     padding: "16px 0",
                     borderBottom: "1px solid var(--line-2)",
-                    alignItems: "baseline",
                     animationDelay: `${i * 24}ms`,
                   }}
                 >
-                  <span className="mute-ink num" style={{ fontSize: 12 }}>
-                    {e.occurredAt.toLocaleDateString(undefined, {
-                      month: "short",
-                      day: "numeric",
-                    })}
-                  </span>
-                  <span className="label" style={{ color: "var(--red)" }}>
-                    {e.eventType}
-                  </span>
-                  <span
-                    className="num"
+                  <div
                     style={{
-                      fontSize: 14,
-                      fontWeight: 500,
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
+                      display: "grid",
+                      gridTemplateColumns: "100px 140px 160px 1fr",
+                      gap: 24,
+                      alignItems: "baseline",
                     }}
                   >
-                    {payload.assigneeDisplayName ?? "unassigned"}
-                  </span>
-                  <a
-                    href={payload.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="lk-mute"
-                    style={{
-                      fontSize: 14,
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                      display: "block",
-                    }}
-                  >
-                    {payload.title ?? payload.issueKey ?? "—"}
-                  </a>
+                    <span className="mute-ink num" style={{ fontSize: 12 }}>
+                      {e.occurredAt.toLocaleDateString(undefined, {
+                        month: "short",
+                        day: "numeric",
+                      })}
+                    </span>
+                    <span className="label" style={{ color: eventMeta.color }}>
+                      {eventMeta.label}
+                    </span>
+                    <span
+                      className="num"
+                      style={{
+                        fontSize: 14,
+                        fontWeight: 500,
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {payload.assigneeDisplayName ?? "unassigned"}
+                    </span>
+                    <a
+                      href={payload.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="lk-mute"
+                      style={{
+                        fontSize: 14,
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                        display: "block",
+                      }}
+                    >
+                      {payload.title ?? payload.issueKey ?? "—"}
+                    </a>
+                  </div>
+                  {e.eventType === "issue_updated" && payload.previousStatus && (
+                    <div
+                      className="mute-ink"
+                      style={{ fontSize: 12, marginTop: 6, paddingLeft: 124 }}
+                    >
+                      {payload.previousStatus} → {payload.status}
+                    </div>
+                  )}
+                  {showAc && acJudgements.length > 0 && (
+                    <div style={{ marginTop: 12, paddingLeft: 124 }}>
+                      <div
+                        style={{
+                          fontSize: 12,
+                          color: acAllMet ? "#10b981" : "var(--red)",
+                          marginBottom: 8,
+                          fontWeight: 500,
+                        }}
+                      >
+                        {acAllMet ? "✓ All AC met" : "⚠ AC not met"} — {payload.acSummary}
+                      </div>
+                      <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "grid", gap: 4 }}>
+                        {acJudgements.map((j, idx) => (
+                          <li
+                            key={idx}
+                            style={{
+                              fontSize: 12,
+                              color: j.aiThinksDone ? "var(--ink)" : "var(--red)",
+                              display: "flex",
+                              gap: 8,
+                              alignItems: "baseline",
+                            }}
+                          >
+                            <span style={{ fontFamily: "monospace" }}>
+                              [{j.aiThinksDone ? "x" : " "}]
+                            </span>
+                            <span style={{ flex: 1 }}>
+                              {j.acText}
+                              {j.selfReportedDone !== j.aiThinksDone && (
+                                <span className="mute-ink" style={{ marginLeft: 6 }}>
+                                  (team marked {j.selfReportedDone ? "done" : "not done"})
+                                </span>
+                              )}
+                              <div className="mute-ink" style={{ fontSize: 11, marginTop: 2 }}>
+                                {j.reason}
+                              </div>
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
                 </div>
               );
             })

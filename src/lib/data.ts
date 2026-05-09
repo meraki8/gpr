@@ -841,6 +841,140 @@ export async function getProjectLeaderboard(projectId: string) {
     githubByUser.set(e.userId, bucket);
   }
 
+  // Jira aggregation: per-user counts of completed / AC-failed
+  // tickets, plus the project's "active sprint" derived from the
+  // most recent payloads (Jira webhook + REST sync both write
+  // sprintActiveName).
+  const jiraEvents = await db.contributionEvent.findMany({
+    where: { projectId, sourceType: "JIRA" },
+    select: {
+      userId: true,
+      eventType: true,
+      payloadJson: true,
+      occurredAt: true,
+    },
+    orderBy: { occurredAt: "desc" },
+  });
+  type JiraBucket = {
+    completed: number;
+    acFailed: number;
+    overdue: number;
+    sprintCompleted: number;
+    sprintTotal: number;
+  };
+  const jiraByUser = new Map<string, JiraBucket>();
+  const sprintNameVotes = new Map<string, number>();
+  // Most recent payload per issueId — used to compute sprint totals
+  // without double-counting an issue that has multiple events.
+  type LatestIssue = {
+    issueId: string;
+    userId: string | null;
+    statusCategory: string;
+    sprint: string | null;
+    isAcFailed: boolean;
+    isOverdue: boolean;
+  };
+  const latestByIssueId = new Map<string, LatestIssue>();
+  // Track which (user, issue) pairs we've already credited a
+  // completion to so re-syncs don't inflate counts.
+  const completedSeen = new Set<string>();
+  const acFailedSeen = new Set<string>();
+  const overdueSeenToday = new Set<string>();
+
+  for (const e of jiraEvents) {
+    const payload = e.payloadJson as {
+      issueId?: string;
+      statusCategory?: string;
+      sprintActiveName?: string | null;
+      acAllMet?: boolean;
+    };
+    if (payload.sprintActiveName) {
+      sprintNameVotes.set(
+        payload.sprintActiveName,
+        (sprintNameVotes.get(payload.sprintActiveName) ?? 0) + 1,
+      );
+    }
+
+    if (payload.issueId && !latestByIssueId.has(payload.issueId)) {
+      latestByIssueId.set(payload.issueId, {
+        issueId: payload.issueId,
+        userId: e.userId,
+        statusCategory: payload.statusCategory ?? "undefined",
+        sprint: payload.sprintActiveName ?? null,
+        isAcFailed:
+          e.eventType === "issue_completed_ac_failed" ||
+          payload.acAllMet === false,
+        isOverdue: e.eventType === "issue_overdue",
+      });
+    }
+
+    if (!e.userId || !payload.issueId) continue;
+    const bucket = jiraByUser.get(e.userId) ?? {
+      completed: 0,
+      acFailed: 0,
+      overdue: 0,
+      sprintCompleted: 0,
+      sprintTotal: 0,
+    };
+    const issueKey = `${e.userId}:${payload.issueId}`;
+    if (
+      e.eventType === "issue_completed" ||
+      e.eventType === "issue_completed_ac_failed"
+    ) {
+      if (!completedSeen.has(issueKey)) {
+        completedSeen.add(issueKey);
+        bucket.completed += 1;
+      }
+    }
+    if (
+      e.eventType === "issue_completed_ac_failed" &&
+      !acFailedSeen.has(issueKey)
+    ) {
+      acFailedSeen.add(issueKey);
+      bucket.acFailed += 1;
+    }
+    if (e.eventType === "issue_overdue") {
+      const dayKey = `${issueKey}:${e.occurredAt.toISOString().slice(0, 10)}`;
+      if (!overdueSeenToday.has(dayKey)) {
+        overdueSeenToday.add(dayKey);
+        bucket.overdue += 1;
+      }
+    }
+    jiraByUser.set(e.userId, bucket);
+  }
+
+  // Active sprint = the sprint name we've seen most often in recent
+  // payloads. This stays stable across syncs even if a sprint is
+  // briefly missing from one issue.
+  const activeSprint =
+    [...sprintNameVotes.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ??
+    null;
+
+  // Per-user sprint progress, computed from the latest snapshot per
+  // issue so re-syncs don't double-count.
+  let sprintCompletedTotal = 0;
+  let sprintTotal = 0;
+  if (activeSprint) {
+    for (const issue of latestByIssueId.values()) {
+      if (issue.sprint !== activeSprint) continue;
+      sprintTotal += 1;
+      const isDone = issue.statusCategory === "done";
+      if (isDone) sprintCompletedTotal += 1;
+      if (issue.userId) {
+        const bucket = jiraByUser.get(issue.userId) ?? {
+          completed: 0,
+          acFailed: 0,
+          overdue: 0,
+          sprintCompleted: 0,
+          sprintTotal: 0,
+        };
+        bucket.sprintTotal += 1;
+        if (isDone) bucket.sprintCompleted += 1;
+        jiraByUser.set(issue.userId, bucket);
+      }
+    }
+  }
+
   const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
 
   const enrichedMembers = project.members.map((m, idx) => {
@@ -884,6 +1018,13 @@ export async function getProjectLeaderboard(projectId: string) {
         RED: 0,
       },
       github: githubByUser.get(m.user.id) ?? { commits: 0, prs: 0 },
+      jira: jiraByUser.get(m.user.id) ?? {
+        completed: 0,
+        acFailed: 0,
+        overdue: 0,
+        sprintCompleted: 0,
+        sprintTotal: 0,
+      },
     };
   });
 
@@ -905,6 +1046,9 @@ export async function getProjectLeaderboard(projectId: string) {
   const hasGithubSource = project.contributionSources.some(
     (s) => s.sourceType === "GITHUB",
   );
+  const hasJiraSource = project.contributionSources.some(
+    (s) => s.sourceType === "JIRA",
+  );
 
   return {
     project: {
@@ -919,6 +1063,10 @@ export async function getProjectLeaderboard(projectId: string) {
       totalMeetings,
       mostImproved,
       hasGithubSource,
+      hasJiraSource,
+      activeSprint,
+      sprintCompleted: sprintCompletedTotal,
+      sprintTotal,
     },
   };
 }

@@ -1,4 +1,6 @@
 import {
+  AlertTriangle,
+  CheckCircle2,
   GitCommit,
   GitPullRequest,
   Medal,
@@ -56,7 +58,7 @@ export default async function LeaderboardPage({
         <PageHead
           eyebrow={`Leaderboard · ${board.project.name}`}
           title="Who's carrying the squad."
-          sub="Cumulative score from meetings, cards, and GitHub. The ref keeps tabs."
+          sub="Cumulative score from meetings, cards, GitHub, and Jira. The ref keeps tabs."
         />
 
         {/* Top stats */}
@@ -96,6 +98,17 @@ export default async function LeaderboardPage({
                 : "Need a week of history"
             }
           />
+          {board.totals.activeSprint && board.totals.sprintTotal > 0 && (
+            <StatTile
+              label={`Sprint · ${board.totals.activeSprint}`}
+              valueText={`${board.totals.sprintCompleted} / ${board.totals.sprintTotal}`}
+              sub={
+                board.totals.sprintTotal === board.totals.sprintCompleted
+                  ? "Sprint complete"
+                  : `${board.totals.sprintTotal - board.totals.sprintCompleted} tickets left`
+              }
+            />
+          )}
         </section>
 
         {/* Podium */}
@@ -145,7 +158,7 @@ export default async function LeaderboardPage({
               style={{
                 display: "grid",
                 gridTemplateColumns:
-                  "70px minmax(0, 1fr) 110px 110px 150px 110px 110px",
+                  "70px minmax(0, 1fr) 110px 110px 150px 110px 110px 110px",
                 gap: 20,
                 padding: "16px 0 8px",
                 color: "var(--mute)",
@@ -161,6 +174,7 @@ export default async function LeaderboardPage({
               <span style={{ textAlign: "right" }}>Trend</span>
               <span>Cards</span>
               <span style={{ textAlign: "right" }}>GitHub</span>
+              <span style={{ textAlign: "right" }}>Jira</span>
               <span style={{ textAlign: "right" }} />
             </div>
             {rest.map((m, i) => (
@@ -345,6 +359,7 @@ function PodiumCard({
           <TrendChip trend={member.trend} size={isGold ? "lg" : "md"} />
           <CardChips counts={member.cardCounts} size={isGold ? "lg" : "md"} />
           <GithubChip github={member.github} size={isGold ? "lg" : "md"} />
+          <JiraChip jira={member.jira} size={isGold ? "lg" : "md"} />
         </div>
         {member.user.id !== viewerId && (
           <div style={{ marginTop: 14 }}>
@@ -446,6 +461,7 @@ function StandardRow({
       </div>
       <CardChips counts={member.cardCounts} />
       <GithubChip github={member.github} alignRight />
+      <JiraChip jira={member.jira} alignRight />
       <div style={{ display: "flex", justifyContent: "flex-end" }}>
         {member.user.id === viewerId ? (
           <span
@@ -669,6 +685,105 @@ function CardChips({
           </span>
         );
       })}
+    </span>
+  );
+}
+
+function JiraChip({
+  jira,
+  alignRight,
+  size = "md",
+}: {
+  jira: {
+    completed: number;
+    acFailed: number;
+    overdue: number;
+    sprintCompleted: number;
+    sprintTotal: number;
+  };
+  alignRight?: boolean;
+  size?: "md" | "lg";
+}) {
+  const fontSize = size === "lg" ? 16 : 14;
+  const iconSize = size === "lg" ? 16 : 14;
+  const hasAny =
+    jira.completed > 0 ||
+    jira.acFailed > 0 ||
+    jira.overdue > 0 ||
+    jira.sprintTotal > 0;
+  if (!hasAny) {
+    return (
+      <span
+        className="mute-ink"
+        style={{
+          fontSize: 13,
+          textAlign: alignRight ? "right" : undefined,
+          display: "block",
+        }}
+      >
+        —
+      </span>
+    );
+  }
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        gap: 12,
+        alignItems: "center",
+        justifyContent: alignRight ? "flex-end" : "flex-start",
+        flexWrap: "wrap",
+      }}
+    >
+      {jira.sprintTotal > 0 && (
+        <span
+          title={`${jira.sprintCompleted} of ${jira.sprintTotal} sprint tickets done`}
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 5,
+            fontSize,
+            fontWeight: 600,
+            color: "var(--ink)",
+          }}
+        >
+          <span className="num">
+            {jira.sprintCompleted}/{jira.sprintTotal}
+          </span>
+        </span>
+      )}
+      {jira.completed > 0 && jira.sprintTotal === 0 && (
+        <span
+          title={`${jira.completed} ticket${jira.completed === 1 ? "" : "s"} completed`}
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 5,
+            fontSize,
+            fontWeight: 600,
+            color: "var(--ink)",
+          }}
+        >
+          <CheckCircle2 size={iconSize} strokeWidth={2.2} />
+          <span className="num">{jira.completed}</span>
+        </span>
+      )}
+      {(jira.acFailed > 0 || jira.overdue > 0) && (
+        <span
+          title={`${jira.acFailed} AC failure${jira.acFailed === 1 ? "" : "s"}, ${jira.overdue} overdue`}
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 5,
+            fontSize,
+            fontWeight: 600,
+            color: "var(--red)",
+          }}
+        >
+          <AlertTriangle size={iconSize} strokeWidth={2.2} />
+          <span className="num">{jira.acFailed + jira.overdue}</span>
+        </span>
+      )}
     </span>
   );
 }
