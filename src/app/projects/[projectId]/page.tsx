@@ -21,6 +21,11 @@ export default async function ProjectPage({
   const hasGithubSource = project.contributionSources.some(
     (s) => s.sourceType === "GITHUB",
   );
+  // Non-owners can't view DRAFT reports — getMatchReport 404s them.
+  // Filter the list so they only see clickable links that work.
+  const visibleReports = isOwner
+    ? project.matchReports
+    : project.matchReports.filter((r) => r.status === "PUBLISHED");
 
   const daysUntilDeadline = project.deadline
     ? Math.ceil(
@@ -190,46 +195,49 @@ export default async function ProjectPage({
           )}
         </div>
 
-        <div className="border-t border-white/10 pt-8 mb-12">
-          <h2 className="text-sm font-mono uppercase tracking-widest text-white/60 mb-4">
-            Analyze a meeting transcript
-          </h2>
-          <form action={analyzeTranscript} className="grid gap-3">
-            <input type="hidden" name="projectId" value={project.id} />
-            <textarea
-              name="rawText"
-              placeholder="Paste the meeting transcript here. Speaker labels help (e.g. 'Alice: I'll have the wireframes by Friday'). The longer and more detailed, the better the analysis."
-              required
-              rows={8}
-              minLength={20}
-              className="bg-black border border-white/20 px-4 py-3 focus:border-[#DC2626] focus:outline-none resize-none font-mono text-sm leading-relaxed"
-            />
-            <div className="flex items-center gap-4">
-              <button
-                type="submit"
-                className="bg-[#DC2626] text-white px-6 py-2 font-medium hover:bg-[#B91C1C] transition"
-              >
-                Run analysis
-              </button>
-              <p className="text-xs text-white/40 font-mono">
-                Takes ~10&ndash;30 seconds. Generates a draft Match Report.
-              </p>
-            </div>
-          </form>
-        </div>
+        {isOwner && (
+          <div className="border-t border-white/10 pt-8 mb-12">
+            <h2 className="text-sm font-mono uppercase tracking-widest text-white/60 mb-4">
+              Analyze a meeting transcript
+            </h2>
+            <form action={analyzeTranscript} className="grid gap-3">
+              <input type="hidden" name="projectId" value={project.id} />
+              <textarea
+                name="rawText"
+                placeholder="Paste the meeting transcript here. Speaker labels help (e.g. 'Alice: I'll have the wireframes by Friday'). The longer and more detailed, the better the analysis."
+                required
+                rows={8}
+                minLength={20}
+                className="bg-black border border-white/20 px-4 py-3 focus:border-[#DC2626] focus:outline-none resize-none font-mono text-sm leading-relaxed"
+              />
+              <div className="flex items-center gap-4">
+                <button
+                  type="submit"
+                  className="bg-[#DC2626] text-white px-6 py-2 font-medium hover:bg-[#B91C1C] transition"
+                >
+                  Run analysis
+                </button>
+                <p className="text-xs text-white/40 font-mono">
+                  Takes ~10&ndash;30 seconds. Generates a draft Match Report.
+                </p>
+              </div>
+            </form>
+          </div>
+        )}
 
         <div className="border-t border-white/10 pt-8">
           <h2 className="text-sm font-mono uppercase tracking-widest text-white/60 mb-4">
             Match Reports
           </h2>
-          {project.matchReports.length === 0 ? (
+          {visibleReports.length === 0 ? (
             <p className="text-white/50 italic">
-              No reports yet. Paste a transcript above to generate the first
-              one.
+              {isOwner
+                ? "No reports yet. Paste a transcript above to generate the first one."
+                : "No published reports yet. The project owner publishes reports after reviewing the AI-drafted cards."}
             </p>
           ) : (
             <ul className="grid gap-3">
-              {project.matchReports.map((r) => (
+              {visibleReports.map((r) => (
                 <li key={r.id}>
                   <Link
                     href={`/projects/${project.id}/reports/${r.id}`}

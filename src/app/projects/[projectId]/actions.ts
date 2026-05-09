@@ -146,7 +146,9 @@ export async function analyzeTranscript(formData: FormData) {
     where: {
       id: projectId,
       deletedAt: null,
-      members: { some: { userId: user.id } },
+      // Analysis is owner-only — drafts are owner-visible, so a member
+      // running analysis would 404 on the redirect to the new report.
+      members: { some: { userId: user.id, role: "OWNER" } },
     },
     include: { members: { include: { user: true } } },
   });
