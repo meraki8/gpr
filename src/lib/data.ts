@@ -5,7 +5,33 @@ import { requireDbUser } from "./auth";
 export async function getMyGroups() {
   const user = await requireDbUser();
   return db.group.findMany({
-    where: { members: { some: { userId: user.id } } },
+    where: {
+      // Any connection: explicit GroupMember, OR a project the user is a
+      // ProjectMember of, OR a project with an accepted email-invite for
+      // this user. This way a teammate invited only to a single project
+      // still sees that project's group in their sidebar.
+      OR: [
+        { members: { some: { userId: user.id } } },
+        {
+          projects: {
+            some: {
+              deletedAt: null,
+              OR: [
+                { members: { some: { userId: user.id } } },
+                {
+                  invites: {
+                    some: {
+                      email: { equals: user.email, mode: "insensitive" },
+                      acceptedAt: { not: null },
+                    },
+                  },
+                },
+              ],
+            },
+          },
+        },
+      ],
+    },
     include: {
       _count: {
         select: {
@@ -55,18 +81,39 @@ export async function getMyProjects() {
 
 export async function getGroup(groupId: string) {
   const user = await requireDbUser();
+  const projectAccessFilter = {
+    deletedAt: null,
+    OR: [
+      { members: { some: { userId: user.id } } },
+      {
+        invites: {
+          some: {
+            email: { equals: user.email, mode: "insensitive" as const },
+            acceptedAt: { not: null },
+          },
+        },
+      },
+    ],
+  };
   const group = await db.group.findFirst({
     where: {
       id: groupId,
-      members: { some: { userId: user.id } },
+      // Allow access if user is a GroupMember OR has access to any project
+      // in this group. Aligns with sidebar visibility from getMyGroups.
+      OR: [
+        { members: { some: { userId: user.id } } },
+        { projects: { some: projectAccessFilter } },
+      ],
     },
     include: {
       members: {
         include: { user: true },
         orderBy: { joinedAt: "asc" },
       },
+      // Only show projects the user actually has access to — don't leak
+      // other projects in the group.
       projects: {
-        where: { deletedAt: null },
+        where: projectAccessFilter,
         orderBy: { createdAt: "desc" },
       },
     },

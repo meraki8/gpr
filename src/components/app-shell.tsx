@@ -46,7 +46,10 @@ export function AppShell({
           <Wordmark />
         </Link>
 
-        <nav className="flex flex-col gap-0.5 mb-8">
+        <nav
+          className="flex flex-col mb-8"
+          style={{ gap: 2, minWidth: 0 }}
+        >
           <SidebarItem
             href="/dashboard"
             label="Dashboard"
@@ -54,10 +57,13 @@ export function AppShell({
           />
         </nav>
 
-        <div className="label mb-2.5" style={{ paddingLeft: 16 }}>
+        <div className="label" style={{ paddingLeft: 16, marginBottom: 10 }}>
           Groups
         </div>
-        <nav className="flex flex-col gap-0.5 mb-8">
+        <nav
+          className="flex flex-col mb-8"
+          style={{ gap: 2, minWidth: 0 }}
+        >
           {groups.length === 0 ? (
             <span
               className="mute-ink"
@@ -84,10 +90,23 @@ export function AppShell({
 
         {inProjectContext && currentProject && (
           <>
-            <div className="label mb-2.5 truncate" style={{ paddingLeft: 16 }}>
+            <div
+              className="label"
+              style={{
+                paddingLeft: 16,
+                marginBottom: 10,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+              title={currentProject.name}
+            >
               {currentProject.name}
             </div>
-            <nav className="flex flex-col gap-0.5 mb-8">
+            <nav
+              className="flex flex-col mb-8"
+              style={{ gap: 2, minWidth: 0 }}
+            >
               <SidebarItem
                 href={`/projects/${currentProject.id}`}
                 label="Overview"
@@ -103,20 +122,36 @@ export function AppShell({
         )}
 
         <div
-          className="mt-auto pt-5 flex items-center gap-3"
-          style={{ borderTop: "1px solid var(--line)" }}
+          className="mt-auto pt-5 flex items-center"
+          style={{
+            borderTop: "1px solid var(--line)",
+            gap: 12,
+            minWidth: 0,
+          }}
         >
           <UserButton />
-          <div className="min-w-0 flex-1">
+          <div style={{ minWidth: 0, flex: 1 }}>
             <div
-              className="truncate"
-              style={{ fontSize: 13, fontWeight: 500 }}
+              style={{
+                fontSize: 13,
+                fontWeight: 500,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+              title={user.name ?? undefined}
             >
               {user.name ?? user.email.split("@")[0]}
             </div>
             <div
-              className="truncate mute-ink"
-              style={{ fontSize: 11 }}
+              className="mute-ink"
+              style={{
+                fontSize: 11,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+              title={user.email}
             >
               {user.email}
             </div>
@@ -141,8 +176,12 @@ function SidebarItem({
   return (
     <Link
       href={href}
-      className="relative inline-flex items-center"
+      title={label}
+      className="relative flex items-center"
       style={{
+        width: "100%",
+        boxSizing: "border-box",
+        minWidth: 0,
         color: active ? "var(--ink)" : "var(--mute)",
         fontSize: 14,
         fontWeight: active ? 500 : 400,
@@ -153,8 +192,8 @@ function SidebarItem({
     >
       {active && (
         <span
-          className="absolute"
           style={{
+            position: "absolute",
             left: 0,
             top: "50%",
             transform: "translateY(-50%)",
@@ -164,7 +203,17 @@ function SidebarItem({
           }}
         />
       )}
-      <span className="truncate">{label}</span>
+      <span
+        style={{
+          flex: 1,
+          minWidth: 0,
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+        }}
+      >
+        {label}
+      </span>
     </Link>
   );
 }
