@@ -23,7 +23,21 @@ export async function getMyProjects() {
   return db.project.findMany({
     where: {
       deletedAt: null,
-      members: { some: { userId: user.id } },
+      // Project membership OR an accepted invite for this email — covers
+      // both the canonical case (acceptInvite created a ProjectMember)
+      // and any legacy / edge-case state where the invite is accepted
+      // without a matching member row.
+      OR: [
+        { members: { some: { userId: user.id } } },
+        {
+          invites: {
+            some: {
+              email: { equals: user.email, mode: "insensitive" },
+              acceptedAt: { not: null },
+            },
+          },
+        },
+      ],
     },
     include: {
       group: true,
