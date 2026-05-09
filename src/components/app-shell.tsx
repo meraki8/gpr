@@ -15,9 +15,11 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Sun,
+  Trophy,
   Users,
 } from "lucide-react";
 import type { ReactNode } from "react";
+import { AskGprPanel } from "./ask-gpr-panel";
 
 type SidebarGroup = { id: string; name: string };
 type SidebarProject = { id: string; name: string };
@@ -219,6 +221,15 @@ export function AppShell({
                 collapsed={collapsed}
               />
               <SidebarItem
+                href={`/projects/${currentProject.id}/leaderboard`}
+                label="Leaderboard"
+                icon={<Trophy size={16} />}
+                active={pathname.startsWith(
+                  `/projects/${currentProject.id}/leaderboard`,
+                )}
+                collapsed={collapsed}
+              />
+              <SidebarItem
                 href={`/projects/${currentProject.id}/transcripts`}
                 label="Transcripts"
                 icon={<FileText size={16} />}
@@ -353,6 +364,16 @@ export function AppShell({
         }}
       >
         {children}
+        {/* Ask GPR is project-scoped — only mount on project pages.
+            Trigger button is fixed bottom-right; panel slides in from
+            the right and is rendered inside the themed content
+            wrapper so its CSS variables resolve to the user's theme. */}
+        {currentProject && (
+          <AskGprPanel
+            projectId={currentProject.id}
+            projectName={currentProject.name}
+          />
+        )}
       </div>
     </div>
   );

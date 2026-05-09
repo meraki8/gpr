@@ -10,14 +10,11 @@ export default async function ReportsIndexPage({
   params: Promise<{ projectId: string }>;
 }) {
   const { projectId } = await params;
-  const [user, nav, { project, isOwner, reports }] = await Promise.all([
+  const [user, nav, { project, reports }] = await Promise.all([
     requireDbUser(),
     getNavContext({ projectId }),
     getProjectReportsList(projectId),
   ]);
-
-  const draftCount = reports.filter((r) => r.status === "DRAFT").length;
-  const roleLabel = isOwner ? "Owner" : "Member";
 
   return (
     <AppShell
@@ -37,31 +34,16 @@ export default async function ReportsIndexPage({
           }
           sub={
             reports.length === 0
-              ? isOwner
-                ? "Run a transcript analysis from the Transcripts tab to draft your first."
-                : "Drafts only show to the project owner. You'll see reports here once they're published."
-              : isOwner && draftCount > 0
-                ? `${draftCount} draft${draftCount === 1 ? "" : "s"} awaiting review.`
-                : "Newest first."
-          }
-          right={
-            <span
-              className="mute-ink"
-              style={{ fontSize: 11, letterSpacing: "0.04em" }}
-              title={`You: ${user.email}`}
-            >
-              You · {roleLabel}
-            </span>
+              ? "Run a transcript analysis from the Transcripts tab to file the first one."
+              : "Newest first. The ref's call is final."
           }
         />
 
-        {/* Column headers */}
         {reports.length > 0 && (
           <div
             style={{
               display: "grid",
-              gridTemplateColumns:
-                "minmax(0, 1fr) 140px 90px 100px 28px",
+              gridTemplateColumns: "minmax(0, 1fr) 140px 90px 28px",
               gap: 24,
               padding: "16px 0 8px",
               color: "var(--mute)",
@@ -74,7 +56,6 @@ export default async function ReportsIndexPage({
             <span>Meeting</span>
             <span>Date</span>
             <span style={{ textAlign: "right" }}>Cards</span>
-            <span>Status</span>
             <span />
           </div>
         )}
@@ -85,7 +66,6 @@ export default async function ReportsIndexPage({
             const fallbackTitle = `Meeting · ${meetingTime.toLocaleDateString(undefined, { month: "short", day: "numeric" })}`;
             const title = r.transcript?.title ?? fallbackTitle;
             const cards = r._count.cards;
-            const isDraft = r.status === "DRAFT";
 
             return (
               <Link
@@ -94,8 +74,7 @@ export default async function ReportsIndexPage({
                 className="row-hover fade-up"
                 style={{
                   display: "grid",
-                  gridTemplateColumns:
-                    "minmax(0, 1fr) 140px 90px 100px 28px",
+                  gridTemplateColumns: "minmax(0, 1fr) 140px 90px 28px",
                   gap: 24,
                   padding: "20px 0",
                   borderBottom: "1px solid var(--line)",
@@ -154,7 +133,6 @@ export default async function ReportsIndexPage({
                 >
                   {cards || "—"}
                 </div>
-                <StatusBadge draft={isDraft} />
                 <span
                   className="mute-ink"
                   style={{ fontSize: 16, textAlign: "right" }}
@@ -167,28 +145,5 @@ export default async function ReportsIndexPage({
         </section>
       </main>
     </AppShell>
-  );
-}
-
-function StatusBadge({ draft }: { draft: boolean }) {
-  return (
-    <span
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        padding: "4px 10px",
-        borderRadius: 999,
-        fontSize: 10,
-        letterSpacing: "0.08em",
-        textTransform: "uppercase",
-        fontWeight: 600,
-        background: draft ? "transparent" : "var(--status-good)",
-        color: draft ? "var(--mute)" : "#fff",
-        border: draft ? "1px solid var(--line)" : "1px solid transparent",
-        whiteSpace: "nowrap",
-      }}
-    >
-      {draft ? "Draft" : "Published"}
-    </span>
   );
 }

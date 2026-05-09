@@ -13,8 +13,6 @@ export const CAPABILITIES = {
   VIEW_LEADERBOARD: "view_leaderboard",
   // Owner-only and never granted to non-owners. Stored capability rows
   // for these are ignored.
-  PUBLISH_REPORT: "publish_report",
-  APPROVE_CARDS: "approve_cards",
   INVITE_MEMBERS: "invite_members",
   MANAGE_SETTINGS: "manage_settings",
   MANAGE_SOURCES: "manage_sources",
@@ -30,8 +28,6 @@ export const MEMBER_TOGGLEABLE: Capability[] = [
 ];
 
 export const OWNER_ONLY: Capability[] = [
-  CAPABILITIES.PUBLISH_REPORT,
-  CAPABILITIES.APPROVE_CARDS,
   CAPABILITIES.INVITE_MEMBERS,
   CAPABILITIES.MANAGE_SETTINGS,
   CAPABILITIES.MANAGE_SOURCES,
@@ -43,8 +39,6 @@ export const CAPABILITY_LABELS: Record<string, string> = {
   view_reports: "View match reports",
   view_kb: "View knowledge base",
   view_leaderboard: "View leaderboard",
-  publish_report: "Publish match reports",
-  approve_cards: "Approve / dismiss cards",
   invite_members: "Invite members",
   manage_settings: "Manage project settings",
   manage_sources: "Manage contribution sources",

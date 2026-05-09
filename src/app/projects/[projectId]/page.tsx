@@ -25,9 +25,8 @@ export default async function ProjectPage({
   const hasGithubSource = project.contributionSources.some(
     (s) => s.sourceType === "GITHUB",
   );
-  const visibleReports = isOwner
-    ? project.matchReports
-    : project.matchReports.filter((r) => r.status === "PUBLISHED");
+  // No status gating anymore — every member sees every report.
+  const visibleReports = project.matchReports;
   const daysUntilDeadline = project.deadline
     ? Math.ceil(
         (project.deadline.getTime() - Date.now()) / (1000 * 60 * 60 * 24),
@@ -98,11 +97,7 @@ export default async function ProjectPage({
           <Stat
             label="Reports filed"
             value={visibleReports.length}
-            sub={
-              isOwner && project.matchReports.length > visibleReports.length
-                ? `${project.matchReports.length - visibleReports.length} drafted`
-                : "Across all stand-ups"
-            }
+            sub="Across all stand-ups"
           />
         </section>
 
@@ -179,9 +174,7 @@ export default async function ProjectPage({
           </div>
           {visibleReports.length === 0 ? (
             <p className="body mute-ink" style={{ margin: 0 }}>
-              {isOwner
-                ? "No reports yet. Paste a transcript below to file the first one."
-                : "No published reports yet. The project owner publishes after reviewing the AI-drafted cards."}
+              No reports yet. Paste a transcript below to file the first one.
             </p>
           ) : (
             visibleReports.map((r, i) => (
@@ -191,7 +184,7 @@ export default async function ProjectPage({
                 className="row-hover fade-up"
                 style={{
                   display: "grid",
-                  gridTemplateColumns: "180px 1fr 80px 28px",
+                  gridTemplateColumns: "180px 1fr 28px",
                   gap: 32,
                   padding: "24px 0",
                   borderBottom: "1px solid var(--line)",
@@ -224,15 +217,6 @@ export default async function ProjectPage({
                   }}
                 >
                   {r.summary}
-                </span>
-                <span
-                  className="label"
-                  style={{
-                    color:
-                      r.status === "DRAFT" ? "var(--mute)" : "var(--ink)",
-                  }}
-                >
-                  {r.status}
                 </span>
                 <span
                   className="mute-ink"

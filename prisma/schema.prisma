@@ -24,11 +24,6 @@ enum TranscriptSource {
   FILE
 }
 
-enum MatchReportStatus {
-  DRAFT
-  PUBLISHED
-}
-
 enum TaskStatus {
   TODO
   IN_PROGRESS
@@ -48,12 +43,6 @@ enum CardType {
   YELLOW
   RED
   MVP
-}
-
-enum CardStatus {
-  DRAFT
-  APPROVED
-  DISMISSED
 }
 
 enum ContributionSourceType {
@@ -81,8 +70,6 @@ model User {
   uploadedTranscripts Transcript[]    @relation("TranscriptUploader")
   assignedTasks       Task[]          @relation("TaskAssignee")
   cardsAgainst        Card[]          @relation("CardSubject")
-  cardsApproved       Card[]          @relation("CardApprover")
-  cardsDismissed      Card[]          @relation("CardDismisser")
   invitesSent         ProjectInvite[] @relation("InviteSender")
   memberReports       MemberReport[]
   notifications       Notification[]
@@ -241,16 +228,14 @@ model Transcript {
 // =================== ANALYSIS: MATCH REPORTS, MEMBER REPORTS ===================
 
 model MatchReport {
-  id           String            @id @default(cuid())
+  id           String   @id @default(cuid())
   projectId    String
   transcriptId String
-  summary      String            @db.Text
+  summary      String   @db.Text
   periodStart  DateTime
   periodEnd    DateTime
-  status       MatchReportStatus @default(DRAFT)
-  publishedAt  DateTime?
-  createdAt    DateTime          @default(now())
-  updatedAt    DateTime          @updatedAt
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
   project       Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
   transcript    Transcript     @relation(fields: [transcriptId], references: [id], onDelete: Cascade)
@@ -259,7 +244,6 @@ model MatchReport {
 
   @@index([projectId])
   @@index([transcriptId])
-  @@index([status])
 }
 
 model MemberReport {
@@ -304,31 +288,23 @@ model Task {
 }
 
 model Card {
-  id            String     @id @default(cuid())
+  id            String   @id @default(cuid())
   projectId     String
   userId        String
   cardType      CardType
-  reason        String     @db.Text
+  reason        String   @db.Text
   evidenceJson  Json?
-  status        CardStatus @default(DRAFT)
-  aiGenerated   Boolean    @default(true)
-  approvedBy    String?
-  approvedAt    DateTime?
-  dismissedBy   String?
-  dismissedAt   DateTime?
+  aiGenerated   Boolean  @default(true)
   matchReportId String?
-  createdAt     DateTime   @default(now())
-  updatedAt     DateTime   @updatedAt
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
   project     Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
   user        User         @relation("CardSubject", fields: [userId], references: [id])
-  approver    User?        @relation("CardApprover", fields: [approvedBy], references: [id])
-  dismisser   User?        @relation("CardDismisser", fields: [dismissedBy], references: [id])
   matchReport MatchReport? @relation(fields: [matchReportId], references: [id])
 
   @@index([projectId])
   @@index([userId])
-  @@index([status])
 }
 
 // =================== CONTRIBUTION PIPELINE ===================

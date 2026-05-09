@@ -4,7 +4,6 @@ import { Score } from "@/components/score";
 import { RefCard, cardKindFromCardType } from "@/components/ref-card";
 import { requireDbUser } from "@/lib/auth";
 import { getMatchReport, getNavContext } from "@/lib/data";
-import { approveCard, dismissCard, publishReport } from "./actions";
 
 export default async function ReportPage({
   params,
@@ -19,9 +18,6 @@ export default async function ReportPage({
   ]);
 
   const memberReports = report.memberReports;
-  const draftCardCount = report.cards.filter(
-    (c) => c.status === "DRAFT",
-  ).length;
   const visibleCardCount = report.cards.length;
   const teamScore = memberReports.length
     ? Math.round(
@@ -54,17 +50,9 @@ export default async function ReportPage({
         <section style={{ padding: "80px 0 100px" }}>
           <div
             className="label fade-up"
-            style={{ marginBottom: 32, display: "flex", gap: 14 }}
+            style={{ marginBottom: 32 }}
           >
-            <span>{headerLabel}</span>
-            <span
-              style={{
-                color:
-                  report.status === "PUBLISHED" ? "var(--ink)" : "var(--mute)",
-              }}
-            >
-              · {report.status}
-            </span>
+            {headerLabel}
           </div>
           <h1
             className="display fade-up"
@@ -107,32 +95,6 @@ export default async function ReportPage({
             />
           </div>
 
-          {report.isOwner && report.status === "DRAFT" && (
-            <div
-              style={{
-                marginTop: 56,
-                display: "flex",
-                alignItems: "center",
-                gap: 16,
-                flexWrap: "wrap",
-              }}
-            >
-              <form action={publishReport}>
-                <input type="hidden" name="reportId" value={report.id} />
-                <button type="submit" className="pill pill-red">
-                  Publish to team →
-                </button>
-              </form>
-              <span
-                className="mute-ink"
-                style={{ fontSize: 13 }}
-              >
-                {draftCardCount > 0
-                  ? `${draftCardCount} draft card${draftCardCount === 1 ? "" : "s"} pending — approve or dismiss below first.`
-                  : "Team will see this report when published."}
-              </span>
-            </div>
-          )}
         </section>
 
         <hr className="hr" />
@@ -325,45 +287,24 @@ export default async function ReportPage({
           </section>
         )}
 
-        {/* Cards (with approve/dismiss for owners) */}
         <section style={{ padding: "100px 0 0" }}>
-          <div
-            style={{
-              display: "flex",
-              alignItems: "baseline",
-              justifyContent: "space-between",
-              marginBottom: 32,
-            }}
-          >
-            <div className="label">
-              Cards
-              {report.isOwner && draftCardCount > 0 && (
-                <span
-                  style={{ color: "var(--red)", marginLeft: 12 }}
-                >
-                  · {draftCardCount} pending review
-                </span>
-              )}
-            </div>
+          <div className="label" style={{ marginBottom: 32 }}>
+            Cards
           </div>
           {report.cards.length === 0 ? (
             <p className="body mute-ink" style={{ margin: 0 }}>
-              {report.isOwner
-                ? "No cards drafted for this meeting."
-                : "No approved cards for this meeting."}
+              No cards issued for this meeting.
             </p>
           ) : (
             report.cards.map((card) => {
               const flag = cardKindFromCardType(card.cardType);
-              const showActions =
-                report.isOwner && card.status === "DRAFT";
               return (
                 <div
                   key={card.id}
                   className="fade-up"
                   style={{
                     display: "grid",
-                    gridTemplateColumns: "60px 1fr auto",
+                    gridTemplateColumns: "60px 1fr",
                     gap: 32,
                     padding: "24px 0",
                     borderBottom: "1px solid var(--line)",
@@ -376,63 +317,22 @@ export default async function ReportPage({
                     rotate={flag === "r" ? 4 : flag === "y" ? -4 : 0}
                   />
                   <div>
-                    <div
-                      style={{
-                        display: "flex",
-                        alignItems: "baseline",
-                        gap: 12,
-                        marginBottom: 4,
-                      }}
-                    >
+                    <div style={{ marginBottom: 4 }}>
                       <span style={{ fontSize: 16, fontWeight: 500 }}>
                         {card.user.name ?? card.user.email}
-                      </span>
-                      <span
-                        className="label"
-                        style={{
-                          color:
-                            card.status === "APPROVED"
-                              ? "var(--status-good)"
-                              : card.status === "DISMISSED"
-                                ? "var(--mute-2)"
-                                : "var(--mute)",
-                        }}
-                      >
-                        {card.status}
                       </span>
                     </div>
                     <p
                       className="body"
-                      style={{ margin: 0, fontSize: 14, color: "var(--ink-2)" }}
+                      style={{
+                        margin: 0,
+                        fontSize: 14,
+                        color: "var(--ink-2)",
+                      }}
                     >
                       {card.reason}
                     </p>
                   </div>
-                  {showActions ? (
-                    <div style={{ display: "flex", gap: 8 }}>
-                      <form action={approveCard}>
-                        <input type="hidden" name="cardId" value={card.id} />
-                        <button
-                          type="submit"
-                          className="pill pill-sm"
-                          style={{ background: "var(--status-good)" }}
-                        >
-                          Approve
-                        </button>
-                      </form>
-                      <form action={dismissCard}>
-                        <input type="hidden" name="cardId" value={card.id} />
-                        <button
-                          type="submit"
-                          className="pill pill-ghost pill-sm"
-                        >
-                          Dismiss
-                        </button>
-                      </form>
-                    </div>
-                  ) : (
-                    <span style={{ width: 1 }} />
-                  )}
                 </div>
               );
             })

@@ -18,6 +18,7 @@ import {
   getRecentKbEntries,
 } from "@/lib/kb";
 import { CAPABILITIES, resolveCapability } from "@/lib/capabilities";
+import { recomputeMemberScores } from "@/lib/scoring";
 
 const InviteSchema = z.object({
   projectId: z.string().min(1),
@@ -394,7 +395,6 @@ export async function analyzeTranscript(formData: FormData) {
       summary: analysis.summary,
       periodStart: reportPeriod,
       periodEnd: reportPeriod,
-      status: "DRAFT",
       memberReports: {
         create: analysis.members.map((m) => ({
           userId: m.user_id,
@@ -411,7 +411,6 @@ export async function analyzeTranscript(formData: FormData) {
           cardType: c.card_type,
           reason: c.reason,
           evidenceJson: { quotes: c.evidence_quotes },
-          status: "DRAFT",
           aiGenerated: true,
         })),
       },
@@ -448,9 +447,20 @@ export async function analyzeTranscript(formData: FormData) {
     }
   }
 
+  // 7. Recompute cumulative scores now that this report's
+  // MemberReports + cards exist. Best-effort — a failure shouldn't
+  // roll back the analysis.
+  try {
+    await recomputeMemberScores(projectId, "transcript analysis");
+  } catch (err) {
+    console.error("Failed to recompute member scores:", err);
+  }
+
   revalidatePath(`/projects/${projectId}`);
   revalidatePath(`/projects/${projectId}/kb`);
   revalidatePath(`/projects/${projectId}/transcripts`);
   revalidatePath(`/projects/${projectId}/reports`);
+  revalidatePath(`/projects/${projectId}/leaderboard`);
+  revalidatePath(`/projects/${projectId}/members`);
   redirect(`/projects/${projectId}/reports/${matchReport.id}`);
 }

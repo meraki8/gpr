@@ -71,8 +71,8 @@ export async function getMyProjects() {
       _count: {
         select: {
           members: true,
-          cards: { where: { status: "APPROVED" } },
-          matchReports: { where: { status: "PUBLISHED" } },
+          cards: true,
+          matchReports: true,
         },
       },
     },
@@ -147,7 +147,6 @@ export async function getProject(projectId: string) {
         },
       },
       cards: {
-        where: { status: "APPROVED" },
         orderBy: { createdAt: "desc" },
         take: 8,
         include: { user: true },
@@ -168,7 +167,9 @@ export async function getProject(projectId: string) {
   return project;
 }
 
-export async function getProjectSources(projectId: string) {
+const EVENTS_PER_PAGE = 10;
+
+export async function getProjectSources(projectId: string, page = 1) {
   const user = await requireDbUser();
 
   const member = await db.projectMember.findFirst({
@@ -191,13 +192,22 @@ export async function getProjectSources(projectId: string) {
       contributionSources: { orderBy: { createdAt: "asc" } },
       contributionEvents: {
         orderBy: { occurredAt: "desc" },
-        take: 30,
+        skip: (page - 1) * EVENTS_PER_PAGE,
+        take: EVENTS_PER_PAGE + 1,
       },
     },
   });
   if (!project) notFound();
 
-  return { project, isOwner: member.role === "OWNER" };
+  const hasNextPage = project.contributionEvents.length > EVENTS_PER_PAGE;
+  const contributionEvents = project.contributionEvents.slice(0, EVENTS_PER_PAGE);
+
+  return {
+    project: { ...project, contributionEvents },
+    isOwner: member.role === "OWNER",
+    page,
+    hasNextPage,
+  };
 }
 
 // Resolves the sidebar context from whatever URL the user is on.
@@ -311,7 +321,7 @@ export async function getProjectTranscripts(projectId: string) {
         orderBy: [{ meetingAt: "desc" }, { createdAt: "desc" }],
         include: {
           uploader: true,
-          matchReports: { select: { id: true, status: true } },
+          matchReports: { select: { id: true } },
         },
       },
       members: {
@@ -405,11 +415,170 @@ export async function getProjectReportsList(projectId: string) {
   });
   if (!project) notFound();
   const isOwner = project.members[0]?.role === "OWNER";
-  // Members never see drafts — only owners get to review them.
-  const visibleReports = isOwner
-    ? project.matchReports
-    : project.matchReports.filter((r) => r.status === "PUBLISHED");
-  return { project, isOwner, reports: visibleReports };
+  // Reports are final the moment the AI returns them — everyone on
+  // the project sees every report. isOwner is still surfaced for the
+  // role indicator on the page.
+  return { project, isOwner, reports: project.matchReports };
+}
+
+export async function getProjectLeaderboard(projectId: string) {
+  const user = await requireDbUser();
+  const project = await db.project.findFirst({
+    where: {
+      id: projectId,
+      deletedAt: null,
+      members: { some: { userId: user.id } },
+    },
+    include: {
+      group: true,
+      contributionSources: {
+        select: { sourceType: true, lastSyncedAt: true },
+      },
+      members: {
+        orderBy: [
+          { contributionScore: "desc" },
+          { joinedAt: "asc" },
+        ],
+        include: {
+          user: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+              avatarUrl: true,
+              memberReports: {
+                where: { matchReport: { projectId } },
+                orderBy: { createdAt: "desc" },
+                select: { contributionScore: true, createdAt: true },
+              },
+            },
+          },
+          scoreSnapshots: {
+            orderBy: { computedAt: "desc" },
+            take: 30,
+            select: { score: true, computedAt: true },
+          },
+        },
+      },
+    },
+  });
+  if (!project) notFound();
+
+  // For each member: counts of cards by type, GitHub events, and the
+  // last + previous per-meeting scores for the trend arrow.
+  const cardRows = await db.card.findMany({
+    where: { projectId },
+    select: { userId: true, cardType: true },
+  });
+  const cardsByUser = new Map<
+    string,
+    { MVP: number; YELLOW: number; RED: number }
+  >();
+  for (const c of cardRows) {
+    const bucket = cardsByUser.get(c.userId) ?? {
+      MVP: 0,
+      YELLOW: 0,
+      RED: 0,
+    };
+    bucket[c.cardType] += 1;
+    cardsByUser.set(c.userId, bucket);
+  }
+
+  const githubEvents = await db.contributionEvent.findMany({
+    where: { projectId, sourceType: "GITHUB" },
+    select: { userId: true, eventType: true },
+  });
+  const githubByUser = new Map<
+    string,
+    { commits: number; prs: number }
+  >();
+  for (const e of githubEvents) {
+    if (!e.userId) continue;
+    const bucket = githubByUser.get(e.userId) ?? { commits: 0, prs: 0 };
+    if (e.eventType === "commit") bucket.commits += 1;
+    else if (e.eventType.startsWith("pr_")) bucket.prs += 1;
+    githubByUser.set(e.userId, bucket);
+  }
+
+  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+
+  const enrichedMembers = project.members.map((m, idx) => {
+    const reports = m.user.memberReports;
+    const lastMeetingScore = reports[0]?.contributionScore ?? null;
+    const previousMeetingScore = reports[1]?.contributionScore ?? null;
+    const trend =
+      lastMeetingScore != null && previousMeetingScore != null
+        ? lastMeetingScore - previousMeetingScore
+        : 0;
+
+    // Most-improved-this-week: compare current score to the most
+    // recent snapshot from before the 7-day window. Snapshots are
+    // already sorted desc, so find the last one older than the
+    // cutoff.
+    const oldSnap = m.scoreSnapshots.find(
+      (s) => s.computedAt < sevenDaysAgo,
+    );
+    const weekDelta = oldSnap ? m.contributionScore - oldSnap.score : 0;
+
+    return {
+      id: m.id,
+      rank: idx + 1,
+      role: m.role,
+      contributionScore: m.contributionScore,
+      joinedAt: m.joinedAt,
+      user: {
+        id: m.user.id,
+        name: m.user.name,
+        email: m.user.email,
+        avatarUrl: m.user.avatarUrl,
+      },
+      meetingsCount: reports.length,
+      lastMeetingScore,
+      previousMeetingScore,
+      trend,
+      weekDelta,
+      cardCounts: cardsByUser.get(m.user.id) ?? {
+        MVP: 0,
+        YELLOW: 0,
+        RED: 0,
+      },
+      github: githubByUser.get(m.user.id) ?? { commits: 0, prs: 0 },
+    };
+  });
+
+  // Project-level totals.
+  const totalMeetings = await db.matchReport.count({
+    where: { projectId },
+  });
+  const healthScore =
+    enrichedMembers.length === 0
+      ? 0
+      : Math.round(
+          enrichedMembers.reduce((s, m) => s + m.contributionScore, 0) /
+            enrichedMembers.length,
+        );
+  const mostImproved =
+    enrichedMembers
+      .filter((m) => m.weekDelta > 0)
+      .sort((a, b) => b.weekDelta - a.weekDelta)[0] ?? null;
+  const hasGithubSource = project.contributionSources.some(
+    (s) => s.sourceType === "GITHUB",
+  );
+
+  return {
+    project: {
+      id: project.id,
+      name: project.name,
+      group: project.group,
+    },
+    members: enrichedMembers,
+    totals: {
+      healthScore,
+      totalMeetings,
+      mostImproved,
+      hasGithubSource,
+    },
+  };
 }
 
 export async function getProjectKb(projectId: string) {
@@ -486,18 +655,8 @@ export async function getMatchReport(reportId: string) {
     },
   });
   if (!report) notFound();
-
   const isOwner = report.project.members[0]?.role === "OWNER";
-
-  // Members can view draft reports — the analysis was opened up to
-  // anyone with the run_analysis capability, and 404'ing the runner
-  // immediately after a successful run was the bug. Non-owners
-  // still only see approved cards (drafts of cards stay owner-only),
-  // and the report page hides approve/dismiss/publish actions for
-  // non-owners.
-  const visibleCards = isOwner
-    ? report.cards
-    : report.cards.filter((c) => c.status === "APPROVED");
-
-  return { ...report, cards: visibleCards, isOwner };
+  // The AI is the ref — every card is final, every report is final.
+  // Anyone on the project sees everything.
+  return { ...report, isOwner };
 }

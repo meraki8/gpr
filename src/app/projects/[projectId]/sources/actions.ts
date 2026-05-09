@@ -7,6 +7,7 @@ import { requireDbUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { fetchCommits, fetchPullRequests } from "@/lib/github";
 import { KB_SOURCES, addKnowledgeEntries } from "@/lib/kb";
+import { recomputeMemberScores } from "@/lib/scoring";
 
 async function requireOwner(projectId: string, userId: string) {
   const member = await db.projectMember.findFirst({
@@ -298,9 +299,18 @@ export async function syncGithubSource(formData: FormData) {
     data: { lastSyncedAt: new Date() },
   });
 
+  // GitHub events change every member's bonus, so recompute.
+  try {
+    await recomputeMemberScores(projectId, "github sync");
+  } catch (err) {
+    console.error("Failed to recompute member scores:", err);
+  }
+
   revalidatePath(`/projects/${projectId}/sources`);
   revalidatePath(`/projects/${projectId}`);
   revalidatePath(`/projects/${projectId}/kb`);
+  revalidatePath(`/projects/${projectId}/leaderboard`);
+  revalidatePath(`/projects/${projectId}/members`);
 }
 
 // =================== JIRA ===================
