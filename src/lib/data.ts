@@ -167,7 +167,9 @@ export async function getProject(projectId: string) {
   return project;
 }
 
-export async function getProjectSources(projectId: string) {
+const EVENTS_PER_PAGE = 10;
+
+export async function getProjectSources(projectId: string, page = 1) {
   const user = await requireDbUser();
 
   const member = await db.projectMember.findFirst({
@@ -190,13 +192,22 @@ export async function getProjectSources(projectId: string) {
       contributionSources: { orderBy: { createdAt: "asc" } },
       contributionEvents: {
         orderBy: { occurredAt: "desc" },
-        take: 30,
+        skip: (page - 1) * EVENTS_PER_PAGE,
+        take: EVENTS_PER_PAGE + 1,
       },
     },
   });
   if (!project) notFound();
 
-  return { project, isOwner: member.role === "OWNER" };
+  const hasNextPage = project.contributionEvents.length > EVENTS_PER_PAGE;
+  const contributionEvents = project.contributionEvents.slice(0, EVENTS_PER_PAGE);
+
+  return {
+    project: { ...project, contributionEvents },
+    isOwner: member.role === "OWNER",
+    page,
+    hasNextPage,
+  };
 }
 
 // Resolves the sidebar context from whatever URL the user is on.
