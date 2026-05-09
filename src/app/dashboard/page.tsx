@@ -13,7 +13,7 @@ function statusFromHealth(score: number): "good" | "watch" | "risk" {
 }
 function colorForHealth(score: number): string {
   if (score >= 80) return "var(--ink)";
-  if (score >= 60) return "#c89014";
+  if (score >= 60) return "var(--status-watch)";
   return "var(--red)";
 }
 

@@ -1,13 +1,13 @@
 const STATUS_MAP: Record<string, { c: string; t: string }> = {
-  delivering: { c: "#1c8c4d", t: "Delivering" },
-  "on track": { c: "#0a0a0a", t: "On track" },
-  "falling behind": { c: "#c89014", t: "Falling behind" },
+  delivering: { c: "var(--status-good)", t: "Delivering" },
+  "on track": { c: "var(--ink)", t: "On track" },
+  "falling behind": { c: "var(--status-watch)", t: "Falling behind" },
   "no contact": { c: "var(--red)", t: "No contact" },
-  good: { c: "#1c8c4d", t: "Healthy" },
-  watch: { c: "#c89014", t: "Watch" },
+  good: { c: "var(--status-good)", t: "Healthy" },
+  watch: { c: "var(--status-watch)", t: "Watch" },
   risk: { c: "var(--red)", t: "At risk" },
   draft: { c: "var(--mute)", t: "Draft" },
-  published: { c: "#1c8c4d", t: "Published" },
+  published: { c: "var(--status-good)", t: "Published" },
 };
 
 export function Status({ kind }: { kind: string }) {

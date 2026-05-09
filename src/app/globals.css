@@ -1,19 +1,28 @@
 @import "tailwindcss";
 
 /* =========== Design tokens (Tailwind v4 @theme) =========== */
+/* Contrast ratios on bg #fafaf7 (WCAG AA = 4.5:1 normal text, 3:1 large): */
+/*   ink     #0a0a0a → 18.9:1   AAA */
+/*   ink-2   #1c1c1a → 16.2:1   AAA */
+/*   mute    #6a6a66 →  5.11:1  AA  (was #8a8a85, 3.35:1 fail) */
+/*   mute-2  #8e8e8a →  3.13:1  AA-large only — use only for ≥18pt or */
+/*                              non-text decorative elements */
+/*   red     #e10600 →  4.72:1  AA */
+/*   good    #14753f →  5.47:1  AA  (was #1c8c4d, 4.08:1 fail) */
+/*   watch   #8a611a →  5.21:1  AA  (was #c89014, 2.68:1 fail) */
 @theme {
   --color-bg: #fafaf7;
   --color-ink: #0a0a0a;
   --color-ink-2: #1c1c1a;
-  --color-mute: #8a8a85;
-  --color-mute-2: #b8b8b3;
+  --color-mute: #6a6a66;
+  --color-mute-2: #8e8e8a;
   --color-line: #e5e3dc;
   --color-line-2: #ececea;
   --color-paper: #ffffff;
   --color-ref-red: #e10600;
   --color-ref-yellow: #f5c518;
-  --color-good: #1c8c4d;
-  --color-watch: #c89014;
+  --color-good: #14753f;
+  --color-watch: #8a611a;
 
   --font-sans: var(--font-bricolage), "Bricolage Grotesque", system-ui,
     sans-serif;
@@ -26,12 +35,14 @@
   --bg: #fafaf7;
   --ink: #0a0a0a;
   --ink-2: #1c1c1a;
-  --mute: #8a8a85;
-  --mute-2: #b8b8b3;
+  --mute: #6a6a66;
+  --mute-2: #8e8e8a;
   --line: #e5e3dc;
   --line-2: #ececea;
   --paper: #ffffff;
   --red: #e10600;
+  --status-good: #14753f;
+  --status-watch: #8a611a;
 }
 
 * {

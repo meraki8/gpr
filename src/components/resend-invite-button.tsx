@@ -39,7 +39,7 @@ export function ResendInviteButton({ inviteId }: { inviteId: string }) {
       style={{ fontSize: 12 }}
     >
       {status === "success" && cooldown > 0 && (
-        <span style={{ color: "#1c8c4d", fontWeight: 500 }}>
+        <span style={{ color: "var(--status-good)", fontWeight: 500 }}>
           Invite resent
         </span>
       )}
