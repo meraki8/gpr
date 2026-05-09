@@ -16,6 +16,9 @@ export default async function TranscriptsPage({
     getNavContext({ projectId }),
     getProjectTranscripts(projectId),
   ]);
+  // Project members get the form; the action enforces OWNER-only on
+  // the server. Role is surfaced inline so it's never invisibly gated.
+  const roleLabel = isOwner ? "Owner" : "Member";
 
   return (
     <AppShell
@@ -33,26 +36,49 @@ export default async function TranscriptsPage({
               ? "Nothing's been refereed yet."
               : `${project.transcripts.length} meeting${project.transcripts.length === 1 ? "" : "s"} on file.`
           }
-          sub={
-            isOwner
-              ? "Drop a transcript and the ref drafts a Match Report. Key facts auto-flow into the Knowledge Base."
-              : "Each one was the input to a match report. Newest first."
-          }
+          sub="Drop a transcript and the ref drafts a Match Report. Key facts auto-flow into the Knowledge Base."
         />
 
-        {isOwner && (
-          <section
+        <section
+          style={{
+            padding: "8px 0 56px",
+            borderBottom: "1px solid var(--line)",
+          }}
+        >
+          <div
             style={{
-              padding: "8px 0 56px",
-              borderBottom: "1px solid var(--line)",
+              display: "flex",
+              alignItems: "baseline",
+              gap: 12,
+              marginBottom: 18,
             }}
           >
-            <div className="label" style={{ marginBottom: 18 }}>
-              New transcript
-            </div>
-            <TranscriptUploadForm projectId={project.id} />
-          </section>
-        )}
+            <div className="label">New transcript</div>
+            <span
+              className="mute-ink"
+              style={{ fontSize: 11, letterSpacing: "0.04em" }}
+              title={`You: ${user.email}`}
+            >
+              You · {roleLabel}
+            </span>
+          </div>
+          {!isOwner && (
+            <p
+              className="mute-ink"
+              style={{
+                fontSize: 13,
+                marginTop: 0,
+                marginBottom: 18,
+                maxWidth: 640,
+              }}
+            >
+              Heads up: only the project owner can run analysis. If
+              that&apos;s you, your role here may be misset — verify
+              your project membership.
+            </p>
+          )}
+          <TranscriptUploadForm projectId={project.id} />
+        </section>
 
         <section style={{ paddingTop: project.transcripts.length > 0 ? 40 : 0 }}>
           {project.transcripts.length === 0 ? null : (

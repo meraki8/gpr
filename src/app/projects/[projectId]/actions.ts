@@ -203,17 +203,30 @@ export async function analyzeTranscript(formData: FormData) {
     throw new Error("Invalid meeting timestamp");
   }
 
-  const project = await db.project.findFirst({
+  // First confirm membership at all (so we can give a useful error
+  // for the member-but-not-owner case instead of a generic 403).
+  const membership = await db.projectMember.findFirst({
     where: {
-      id: projectId,
-      deletedAt: null,
-      // Analysis is owner-only — drafts are owner-visible, so a member
-      // running analysis would 404 on the redirect to the new report.
-      members: { some: { userId: user.id, role: "OWNER" } },
+      projectId,
+      userId: user.id,
+      project: { deletedAt: null },
     },
+    select: { role: true },
+  });
+  if (!membership) {
+    throw new Error("You don't have access to this project");
+  }
+  if (membership.role !== "OWNER") {
+    throw new Error(
+      "Only the project owner can run transcript analysis",
+    );
+  }
+
+  const project = await db.project.findFirst({
+    where: { id: projectId, deletedAt: null },
     include: { members: { include: { user: true } } },
   });
-  if (!project) throw new Error("FORBIDDEN");
+  if (!project) throw new Error("Project not found");
 
   // 1. Save raw transcript first so it's persisted even if AI fails.
   const transcript = await db.transcript.create({
