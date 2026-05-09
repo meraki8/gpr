@@ -394,7 +394,7 @@ export default async function ReportPage({
                         style={{
                           color:
                             card.status === "APPROVED"
-                              ? "#1c8c4d"
+                              ? "var(--status-good)"
                               : card.status === "DISMISSED"
                                 ? "var(--mute-2)"
                                 : "var(--mute)",
@@ -417,7 +417,7 @@ export default async function ReportPage({
                         <button
                           type="submit"
                           className="pill pill-sm"
-                          style={{ background: "#1c8c4d" }}
+                          style={{ background: "var(--status-good)" }}
                         >
                           Approve
                         </button>

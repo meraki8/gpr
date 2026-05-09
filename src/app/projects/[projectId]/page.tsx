@@ -84,7 +84,7 @@ export default async function ProjectPage({
               project.healthScore >= 80
                 ? "var(--ink)"
                 : project.healthScore >= 60
-                  ? "#c89014"
+                  ? "var(--status-watch)"
                   : "var(--red)"
             }
           />
