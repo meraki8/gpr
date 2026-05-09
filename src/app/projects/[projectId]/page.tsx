@@ -3,6 +3,7 @@ import {
   AlertTriangle,
   ArrowUpRight,
   BookOpen,
+  FileBarChart,
   FileText,
   GitCommit,
   Minus,
@@ -1168,6 +1169,20 @@ function QuickActions({ projectId }: { projectId: string }) {
         >
           <UserPlus size={14} strokeWidth={2.2} />
           Invite member
+        </Link>
+        <Link
+          href={`/projects/${projectId}/report`}
+          className="pill pill-ghost"
+          style={{
+            textDecoration: "none",
+            justifyContent: "center",
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 6,
+          }}
+        >
+          <FileBarChart size={14} strokeWidth={2.2} />
+          Progress Report
         </Link>
         <AskGprTrigger />
         <Link

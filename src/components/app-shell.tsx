@@ -7,6 +7,7 @@ import { UserButton } from "@clerk/nextjs";
 import {
   BookOpen,
   ChevronDown,
+  FileBarChart,
   FileText,
   Flag,
   GitBranch,
@@ -303,6 +304,15 @@ export function AppShell({
                 icon={<SquareKanban size={16} />}
                 active={pathname.startsWith(
                   `/projects/${currentProject.id}/sources/jira`,
+                )}
+                collapsed={collapsed}
+              />
+              <SidebarItem
+                href={`/projects/${currentProject.id}/report`}
+                label="Progress Report"
+                icon={<FileBarChart size={16} />}
+                active={pathname.startsWith(
+                  `/projects/${currentProject.id}/report`,
                 )}
                 collapsed={collapsed}
               />
