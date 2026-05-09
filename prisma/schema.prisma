@@ -1,6 +1,3 @@
-// GPR — Group Project Referee
-// Prisma schema. See scope.md for context.
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -10,7 +7,335 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// =================== ENUMS ===================
+model User {
+  id                  String          @id @default(cuid())
+  clerkUserId         String          @unique
+  email               String          @unique
+  name                String?
+  avatarUrl           String?
+  createdAt           DateTime        @default(now())
+  updatedAt           DateTime        @updatedAt
+  cardsApproved       Card[]          @relation("CardApprover")
+  cardsDismissed      Card[]          @relation("CardDismisser")
+  cardsAgainst        Card[]          @relation("CardSubject")
+  uploadedFiles       ContextFile[]   @relation("FileUploader")
+  ownedGroups         Group[]         @relation("GroupOwner")
+  groupMemberships    GroupMember[]
+  memberReports       MemberReport[]
+  notifications       Notification[]
+  invitesSent         ProjectInvite[] @relation("InviteSender")
+  projectMemberships  ProjectMember[]
+  assignedTasks       Task[]          @relation("TaskAssignee")
+  uploadedTranscripts Transcript[]    @relation("TranscriptUploader")
+
+  @@index([clerkUserId])
+  @@index([email])
+}
+
+model Group {
+  id        String        @id @default(cuid())
+  name      String
+  ownerId   String
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+  owner     User          @relation("GroupOwner", fields: [ownerId], references: [id])
+  members   GroupMember[]
+  projects  Project[]
+
+  @@index([ownerId])
+}
+
+model GroupMember {
+  id        String    @id @default(cuid())
+  groupId   String
+  userId    String
+  role      GroupRole @default(MEMBER)
+  joinedAt  DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  group     Group     @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([groupId, userId])
+  @@index([userId])
+}
+
+model Project {
+  id                  String               @id @default(cuid())
+  groupId             String
+  name                String
+  brief               String
+  deadline            DateTime?
+  healthScore         Int                  @default(100)
+  archivedAt          DateTime?
+  deletedAt           DateTime?
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+  cards               Card[]
+  contextFiles        ContextFile[]
+  contributionEvents  ContributionEvent[]
+  contributionSources ContributionSource[]
+  KnowledgeEntry      KnowledgeEntry[]
+  matchReports        MatchReport[]
+  notifications       Notification[]
+  group               Group                @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  invites             ProjectInvite[]
+  members             ProjectMember[]
+  sourceIdentities    SourceIdentity[]
+  tasks               Task[]
+  transcripts         Transcript[]
+
+  @@index([groupId])
+  @@index([deletedAt])
+}
+
+model ProjectMember {
+  id                String           @id @default(cuid())
+  projectId         String
+  userId            String
+  role              ProjectRole      @default(MEMBER)
+  contributionScore Int              @default(0)
+  joinedAt          DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+  project           Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user              User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  scoreSnapshots    ScoreSnapshot[]
+  sourceIdentities  SourceIdentity[]
+
+  @@unique([projectId, userId])
+  @@index([userId])
+}
+
+model ProjectInvite {
+  id         String    @id @default(cuid())
+  projectId  String
+  email      String
+  token      String    @unique
+  invitedBy  String
+  acceptedAt DateTime?
+  expiresAt  DateTime
+  createdAt  DateTime  @default(now())
+  inviter    User      @relation("InviteSender", fields: [invitedBy], references: [id])
+  project    Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+  @@index([email])
+}
+
+model ContextFile {
+  id         String   @id @default(cuid())
+  projectId  String
+  fileName   String
+  blobUrl    String
+  fileType   String
+  sizeBytes  Int
+  uploadedBy String
+  createdAt  DateTime @default(now())
+  project    Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  uploader   User     @relation("FileUploader", fields: [uploadedBy], references: [id])
+
+  @@index([projectId])
+}
+
+model Transcript {
+  id           String           @id @default(cuid())
+  projectId    String
+  uploadedBy   String
+  rawText      String
+  blobUrl      String?
+  source       TranscriptSource
+  createdAt    DateTime         @default(now())
+  matchReports MatchReport[]
+  project      Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  uploader     User             @relation("TranscriptUploader", fields: [uploadedBy], references: [id])
+
+  @@index([projectId])
+}
+
+model MatchReport {
+  id            String            @id @default(cuid())
+  projectId     String
+  transcriptId  String
+  summary       String
+  periodStart   DateTime
+  periodEnd     DateTime
+  status        MatchReportStatus @default(DRAFT)
+  publishedAt   DateTime?
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+  cards         Card[]
+  project       Project           @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  transcript    Transcript        @relation(fields: [transcriptId], references: [id], onDelete: Cascade)
+  memberReports MemberReport[]
+
+  @@index([projectId])
+  @@index([transcriptId])
+  @@index([status])
+}
+
+model MemberReport {
+  id                String      @id @default(cuid())
+  matchReportId     String
+  userId            String
+  contributionScore Int
+  speakingTimePct   Float?
+  commitmentsJson   Json
+  notes             String?
+  createdAt         DateTime    @default(now())
+  matchReport       MatchReport @relation(fields: [matchReportId], references: [id], onDelete: Cascade)
+  user              User        @relation(fields: [userId], references: [id])
+
+  @@unique([matchReportId, userId])
+  @@index([userId])
+}
+
+model Task {
+  id            String     @id @default(cuid())
+  projectId     String
+  assignedTo    String?
+  title         String
+  description   String?
+  dueDate       DateTime?
+  status        TaskStatus @default(TODO)
+  source        TaskSource
+  sourceRefJson Json?
+  sourceQuote   String?
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+  assignee      User?      @relation("TaskAssignee", fields: [assignedTo], references: [id])
+  project       Project    @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+  @@index([assignedTo])
+  @@index([status])
+}
+
+model Card {
+  id            String       @id @default(cuid())
+  projectId     String
+  userId        String
+  cardType      CardType
+  reason        String
+  evidenceJson  Json?
+  status        CardStatus   @default(DRAFT)
+  aiGenerated   Boolean      @default(true)
+  approvedBy    String?
+  approvedAt    DateTime?
+  dismissedBy   String?
+  dismissedAt   DateTime?
+  matchReportId String?
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+  approver      User?        @relation("CardApprover", fields: [approvedBy], references: [id])
+  dismisser     User?        @relation("CardDismisser", fields: [dismissedBy], references: [id])
+  matchReport   MatchReport? @relation(fields: [matchReportId], references: [id])
+  project       Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user          User         @relation("CardSubject", fields: [userId], references: [id])
+
+  @@index([projectId])
+  @@index([userId])
+  @@index([status])
+}
+
+model ContributionSource {
+  id           String                 @id @default(cuid())
+  projectId    String
+  sourceType   ContributionSourceType
+  configJson   Json
+  enabled      Boolean                @default(true)
+  lastSyncedAt DateTime?
+  createdAt    DateTime               @default(now())
+  updatedAt    DateTime               @updatedAt
+  events       ContributionEvent[]
+  project      Project                @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, sourceType])
+  @@index([projectId])
+  @@index([sourceType])
+}
+
+model ContributionEvent {
+  id          String                 @id @default(cuid())
+  projectId   String
+  sourceId    String
+  sourceType  ContributionSourceType
+  externalId  String
+  eventType   String
+  payloadJson Json
+  userId      String?
+  weight      Float                  @default(1.0)
+  occurredAt  DateTime
+  createdAt   DateTime               @default(now())
+  project     Project                @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  source      ContributionSource     @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+
+  @@unique([sourceId, externalId])
+  @@index([projectId])
+  @@index([userId])
+  @@index([occurredAt])
+}
+
+model SourceIdentity {
+  id              String                 @id @default(cuid())
+  projectId       String
+  projectMemberId String
+  sourceType      ContributionSourceType
+  externalId      String
+  verified        Boolean                @default(false)
+  createdAt       DateTime               @default(now())
+  updatedAt       DateTime               @updatedAt
+  project         Project                @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  projectMember   ProjectMember          @relation(fields: [projectMemberId], references: [id], onDelete: Cascade)
+
+  @@unique([projectMemberId, sourceType])
+  @@unique([projectId, sourceType, externalId])
+  @@index([sourceType, externalId])
+}
+
+model ScoreSnapshot {
+  id              String        @id @default(cuid())
+  projectMemberId String
+  score           Int
+  reason          String
+  computedAt      DateTime      @default(now())
+  projectMember   ProjectMember @relation(fields: [projectMemberId], references: [id], onDelete: Cascade)
+
+  @@index([projectMemberId])
+  @@index([computedAt])
+}
+
+model Notification {
+  id        String    @id @default(cuid())
+  userId    String
+  projectId String?
+  type      String
+  title     String
+  body      String
+  linkUrl   String?
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+  project   Project?  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, readAt])
+  @@index([projectId])
+  @@index([createdAt])
+}
+
+model KnowledgeEntry {
+  id              String   @id
+  projectId       String
+  source          String
+  sourceRefId     String?
+  sourceTypeLabel String?
+  title           String
+  content         String
+  createdAt       DateTime @default(now())
+  Project         Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, source, sourceRefId])
+  @@index([projectId, createdAt])
+  @@index([projectId, source])
+}
 
 enum GroupRole {
   OWNER
@@ -44,6 +369,7 @@ enum TaskSource {
   MANUAL
   TRANSCRIPT
   GITHUB
+  JIRA
 }
 
 enum CardType {
@@ -62,346 +388,5 @@ enum ContributionSourceType {
   GITHUB
   TRANSCRIPT
   MANUAL
-}
-
-// =================== USERS, GROUPS, PROJECTS ===================
-
-model User {
-  id          String   @id @default(cuid())
-  clerkUserId String   @unique
-  email       String   @unique
-  name        String?
-  avatarUrl   String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  ownedGroups         Group[]         @relation("GroupOwner")
-  groupMemberships    GroupMember[]
-  projectMemberships  ProjectMember[]
-  uploadedFiles       ContextFile[]   @relation("FileUploader")
-  uploadedTranscripts Transcript[]    @relation("TranscriptUploader")
-  assignedTasks       Task[]          @relation("TaskAssignee")
-  cardsAgainst        Card[]          @relation("CardSubject")
-  cardsApproved       Card[]          @relation("CardApprover")
-  cardsDismissed      Card[]          @relation("CardDismisser")
-  invitesSent         ProjectInvite[] @relation("InviteSender")
-  memberReports       MemberReport[]
-  notifications       Notification[]
-
-  @@index([clerkUserId])
-  @@index([email])
-}
-
-model Group {
-  id        String   @id @default(cuid())
-  name      String
-  ownerId   String
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  owner    User          @relation("GroupOwner", fields: [ownerId], references: [id])
-  members  GroupMember[]
-  projects Project[]
-
-  @@index([ownerId])
-}
-
-model GroupMember {
-  id        String    @id @default(cuid())
-  groupId   String
-  userId    String
-  role      GroupRole @default(MEMBER)
-  joinedAt  DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
-
-  group Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
-  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@unique([groupId, userId])
-  @@index([userId])
-}
-
-model Project {
-  id          String    @id @default(cuid())
-  groupId     String
-  name        String
-  brief       String    @db.Text
-  deadline    DateTime?
-  healthScore Int       @default(100)
-  archivedAt  DateTime?
-  deletedAt   DateTime?
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
-
-  group               Group                @relation(fields: [groupId], references: [id], onDelete: Cascade)
-  members             ProjectMember[]
-  invites             ProjectInvite[]
-  contextFiles        ContextFile[]
-  transcripts         Transcript[]
-  matchReports        MatchReport[]
-  tasks               Task[]
-  cards               Card[]
-  contributionSources ContributionSource[]
-  contributionEvents  ContributionEvent[]
-  sourceIdentities    SourceIdentity[]
-  notifications       Notification[]
-
-  @@index([groupId])
-  @@index([deletedAt])
-}
-
-model ProjectMember {
-  id                String      @id @default(cuid())
-  projectId         String
-  userId            String
-  role              ProjectRole @default(MEMBER)
-  contributionScore Int         @default(0)
-  joinedAt          DateTime    @default(now())
-  updatedAt         DateTime    @updatedAt
-
-  project          Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  user             User             @relation(fields: [userId], references: [id], onDelete: Cascade)
-  sourceIdentities SourceIdentity[]
-  scoreSnapshots   ScoreSnapshot[]
-
-  @@unique([projectId, userId])
-  @@index([userId])
-}
-
-model ProjectInvite {
-  id         String    @id @default(cuid())
-  projectId  String
-  email      String
-  token      String    @unique
-  invitedBy  String
-  acceptedAt DateTime?
-  expiresAt  DateTime
-  createdAt  DateTime  @default(now())
-
-  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  inviter User    @relation("InviteSender", fields: [invitedBy], references: [id])
-
-  @@index([projectId])
-  @@index([email])
-}
-
-// =================== CONTENT: FILES, TRANSCRIPTS ===================
-
-model ContextFile {
-  id         String   @id @default(cuid())
-  projectId  String
-  fileName   String
-  blobUrl    String
-  fileType   String
-  sizeBytes  Int
-  uploadedBy String
-  createdAt  DateTime @default(now())
-
-  project  Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  uploader User    @relation("FileUploader", fields: [uploadedBy], references: [id])
-
-  @@index([projectId])
-}
-
-model Transcript {
-  id         String           @id @default(cuid())
-  projectId  String
-  uploadedBy String
-  rawText    String           @db.Text
-  blobUrl    String?
-  source     TranscriptSource
-  createdAt  DateTime         @default(now())
-
-  project      Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  uploader     User          @relation("TranscriptUploader", fields: [uploadedBy], references: [id])
-  matchReports MatchReport[]
-
-  @@index([projectId])
-}
-
-// =================== ANALYSIS: MATCH REPORTS, MEMBER REPORTS ===================
-
-model MatchReport {
-  id           String            @id @default(cuid())
-  projectId    String
-  transcriptId String
-  summary      String            @db.Text
-  periodStart  DateTime
-  periodEnd    DateTime
-  status       MatchReportStatus @default(DRAFT)
-  publishedAt  DateTime?
-  createdAt    DateTime          @default(now())
-  updatedAt    DateTime          @updatedAt
-
-  project       Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  transcript    Transcript     @relation(fields: [transcriptId], references: [id], onDelete: Cascade)
-  memberReports MemberReport[]
-  cards         Card[]
-
-  @@index([projectId])
-  @@index([transcriptId])
-  @@index([status])
-}
-
-model MemberReport {
-  id                String   @id @default(cuid())
-  matchReportId     String
-  userId            String
-  contributionScore Int
-  speakingTimePct   Float?
-  commitmentsJson   Json
-  notes             String?  @db.Text
-  createdAt         DateTime @default(now())
-
-  matchReport MatchReport @relation(fields: [matchReportId], references: [id], onDelete: Cascade)
-  user        User        @relation(fields: [userId], references: [id])
-
-  @@unique([matchReportId, userId])
-  @@index([userId])
-}
-
-// =================== WORK: TASKS, CARDS ===================
-
-model Task {
-  id            String     @id @default(cuid())
-  projectId     String
-  assignedTo    String?
-  title         String
-  description   String?    @db.Text
-  dueDate       DateTime?
-  status        TaskStatus @default(TODO)
-  source        TaskSource
-  sourceRefJson Json?
-  sourceQuote   String?    @db.Text
-  createdAt     DateTime   @default(now())
-  updatedAt     DateTime   @updatedAt
-
-  project  Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  assignee User?   @relation("TaskAssignee", fields: [assignedTo], references: [id])
-
-  @@index([projectId])
-  @@index([assignedTo])
-  @@index([status])
-}
-
-model Card {
-  id            String     @id @default(cuid())
-  projectId     String
-  userId        String
-  cardType      CardType
-  reason        String     @db.Text
-  evidenceJson  Json?
-  status        CardStatus @default(DRAFT)
-  aiGenerated   Boolean    @default(true)
-  approvedBy    String?
-  approvedAt    DateTime?
-  dismissedBy   String?
-  dismissedAt   DateTime?
-  matchReportId String?
-  createdAt     DateTime   @default(now())
-  updatedAt     DateTime   @updatedAt
-
-  project     Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  user        User         @relation("CardSubject", fields: [userId], references: [id])
-  approver    User?        @relation("CardApprover", fields: [approvedBy], references: [id])
-  dismisser   User?        @relation("CardDismisser", fields: [dismissedBy], references: [id])
-  matchReport MatchReport? @relation(fields: [matchReportId], references: [id])
-
-  @@index([projectId])
-  @@index([userId])
-  @@index([status])
-}
-
-// =================== CONTRIBUTION PIPELINE (multi-source) ===================
-
-model ContributionSource {
-  id           String                 @id @default(cuid())
-  projectId    String
-  sourceType   ContributionSourceType
-  configJson   Json
-  enabled      Boolean                @default(true)
-  lastSyncedAt DateTime?
-  createdAt    DateTime               @default(now())
-  updatedAt    DateTime               @updatedAt
-
-  project Project             @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  events  ContributionEvent[]
-
-  @@unique([projectId, sourceType])
-  @@index([projectId])
-  @@index([sourceType])
-}
-
-model ContributionEvent {
-  id          String                 @id @default(cuid())
-  projectId   String
-  sourceId    String
-  sourceType  ContributionSourceType
-  externalId  String
-  eventType   String
-  payloadJson Json
-  userId      String?
-  weight      Float                  @default(1.0)
-  occurredAt  DateTime
-  createdAt   DateTime               @default(now())
-
-  project Project            @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  source  ContributionSource @relation(fields: [sourceId], references: [id], onDelete: Cascade)
-
-  @@unique([sourceId, externalId])
-  @@index([projectId])
-  @@index([userId])
-  @@index([occurredAt])
-}
-
-model SourceIdentity {
-  id              String                 @id @default(cuid())
-  projectId       String
-  projectMemberId String
-  sourceType      ContributionSourceType
-  externalId      String
-  verified        Boolean                @default(false)
-  createdAt       DateTime               @default(now())
-  updatedAt       DateTime               @updatedAt
-
-  project       Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  projectMember ProjectMember @relation(fields: [projectMemberId], references: [id], onDelete: Cascade)
-
-  @@unique([projectMemberId, sourceType])
-  @@unique([projectId, sourceType, externalId])
-  @@index([sourceType, externalId])
-}
-
-model ScoreSnapshot {
-  id              String   @id @default(cuid())
-  projectMemberId String
-  score           Int
-  reason          String   @db.Text
-  computedAt      DateTime @default(now())
-
-  projectMember ProjectMember @relation(fields: [projectMemberId], references: [id], onDelete: Cascade)
-
-  @@index([projectMemberId])
-  @@index([computedAt])
-}
-
-// =================== NOTIFICATIONS (stub) ===================
-
-model Notification {
-  id        String    @id @default(cuid())
-  userId    String
-  projectId String?
-  type      String
-  title     String
-  body      String    @db.Text
-  linkUrl   String?
-  readAt    DateTime?
-  createdAt DateTime  @default(now())
-
-  user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  project Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
-
-  @@index([userId, readAt])
-  @@index([projectId])
-  @@index([createdAt])
+  JIRA
 }
