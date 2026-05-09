@@ -127,8 +127,6 @@ export async function POST(req: NextRequest) {
           dueDate: event.due_date ?? null,
           url: event.url ?? null,
         },
-        status: "DRAFT",
-        aiGenerated: true,
       },
     });
   }
