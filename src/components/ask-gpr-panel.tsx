@@ -67,6 +67,14 @@ export function AskGprPanel({
     return () => window.removeEventListener("keydown", onKey);
   }, [open]);
 
+  // Other components on the page (e.g. the overview Quick Actions
+  // bar) can ask the panel to open by dispatching gpr:open-ask.
+  useEffect(() => {
+    const onOpen = () => setOpen(true);
+    window.addEventListener("gpr:open-ask", onOpen);
+    return () => window.removeEventListener("gpr:open-ask", onOpen);
+  }, []);
+
   return (
     <>
       {/* Trigger — fixed bottom right, hides while panel is open. */}
