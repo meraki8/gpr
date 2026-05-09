@@ -407,7 +407,7 @@ export async function getProjectReportsList(projectId: string) {
   return { project, isOwner, reports: visibleReports };
 }
 
-export async function getProjectKb(projectId: string, source?: string) {
+export async function getProjectKb(projectId: string) {
   const user = await requireDbUser();
   const project = await db.project.findFirst({
     where: {
@@ -417,30 +417,38 @@ export async function getProjectKb(projectId: string, source?: string) {
     },
     include: {
       group: true,
-      members: { where: { userId: user.id }, take: 1 },
+      members: {
+        where: { userId: user.id },
+        take: 1,
+        include: {
+          capabilities: { select: { capability: true, enabled: true } },
+        },
+      },
     },
   });
   if (!project) notFound();
 
+  // Pull all entries — filtering / grouping / search live in the
+  // client component. KB stays small enough that this is fine even
+  // for projects that have been running for months.
   const entries = await db.knowledgeEntry.findMany({
-    where: {
-      projectId,
-      ...(source ? { source } : {}),
-    },
-    orderBy: { createdAt: "desc" },
-    take: 200,
-  });
-
-  // Source counts for the filter chips — separate query so the
-  // chip totals stay accurate even when a filter is active.
-  const counts = await db.knowledgeEntry.groupBy({
-    by: ["source"],
     where: { projectId },
-    _count: { _all: true },
+    orderBy: { createdAt: "desc" },
+    take: 1000,
   });
 
-  const isOwner = project.members[0]?.role === "OWNER";
-  return { project, entries, counts, isOwner };
+  const viewerMember = project.members[0];
+  const isOwner = viewerMember?.role === "OWNER";
+  // Manual KB entry is open to owners and any member with the
+  // run_analysis capability — same trust level we use for analysis.
+  const canAddManual = viewerMember
+    ? resolveCapability(
+        viewerMember.role,
+        CAPABILITIES.RUN_ANALYSIS,
+        viewerMember.capabilities,
+      )
+    : false;
+  return { project, entries, isOwner, canAddManual };
 }
 
 export async function getMatchReport(reportId: string) {

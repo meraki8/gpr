@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { requireDbUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { KB_SOURCES, addKnowledgeEntry } from "@/lib/kb";
+import { CAPABILITIES, resolveCapability } from "@/lib/capabilities";
 
 const ManualEntrySchema = z.object({
   projectId: z.string().min(1),
@@ -36,12 +37,27 @@ export async function addManualKnowledgeEntry(formData: FormData) {
 
   const { projectId, title, content, label } = parsed.data;
 
-  // Manual KB writes are owner-only — same trust boundary as analysis
-  // and source config.
+  // Manual KB writes are gated on the run_analysis capability —
+  // owner always passes; member-toggleable per the Members page.
   const member = await db.projectMember.findFirst({
-    where: { projectId, userId: user.id, role: "OWNER" },
+    where: { projectId, userId: user.id, project: { deletedAt: null } },
+    include: {
+      capabilities: { select: { capability: true, enabled: true } },
+    },
   });
-  if (!member) throw new Error("FORBIDDEN");
+  if (!member) {
+    throw new Error("You don't have access to this project");
+  }
+  const canAdd = resolveCapability(
+    member.role,
+    CAPABILITIES.RUN_ANALYSIS,
+    member.capabilities,
+  );
+  if (!canAdd) {
+    throw new Error(
+      "You do not have permission to add knowledge entries on this project.",
+    );
+  }
 
   await addKnowledgeEntry({
     projectId,
