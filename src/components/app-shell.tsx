@@ -15,6 +15,7 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Sun,
+  Trophy,
   Users,
 } from "lucide-react";
 import type { ReactNode } from "react";
@@ -216,6 +217,15 @@ export function AppShell({
                 icon={<Users size={16} />}
                 active={pathname.startsWith(
                   `/projects/${currentProject.id}/members`,
+                )}
+                collapsed={collapsed}
+              />
+              <SidebarItem
+                href={`/projects/${currentProject.id}/leaderboard`}
+                label="Leaderboard"
+                icon={<Trophy size={16} />}
+                active={pathname.startsWith(
+                  `/projects/${currentProject.id}/leaderboard`,
                 )}
                 collapsed={collapsed}
               />

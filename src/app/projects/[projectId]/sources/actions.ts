@@ -6,6 +6,7 @@ import { requireDbUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { fetchCommits, fetchPullRequests } from "@/lib/github";
 import { KB_SOURCES, addKnowledgeEntries } from "@/lib/kb";
+import { recomputeMemberScores } from "@/lib/scoring";
 
 async function requireOwner(projectId: string, userId: string) {
   const member = await db.projectMember.findFirst({
@@ -297,56 +298,16 @@ export async function syncGithubSource(formData: FormData) {
     data: { lastSyncedAt: new Date() },
   });
 
-  await recomputeGithubScores(projectId);
+  // GitHub events change every member's bonus, so recompute.
+  try {
+    await recomputeMemberScores(projectId, "github sync");
+  } catch (err) {
+    console.error("Failed to recompute member scores:", err);
+  }
 
   revalidatePath(`/projects/${projectId}/sources`);
   revalidatePath(`/projects/${projectId}`);
   revalidatePath(`/projects/${projectId}/kb`);
-}
-
-// Recomputes contribution scores for all members with mapped GitHub
-// identities, based on their cumulative weighted event total.
-// commit = 1.0pt, PR = 3.0pt; top contributor is normalised to 100.
-async function recomputeGithubScores(projectId: string) {
-  const events = await db.contributionEvent.findMany({
-    where: { projectId, sourceType: "GITHUB", userId: { not: null } },
-    select: { userId: true, weight: true },
-  });
-
-  if (events.length === 0) return;
-
-  const totalByUser = new Map<string, number>();
-  for (const ev of events) {
-    if (ev.userId) {
-      totalByUser.set(
-        ev.userId,
-        (totalByUser.get(ev.userId) ?? 0) + ev.weight,
-      );
-    }
-  }
-
-  const maxTotal = Math.max(...totalByUser.values());
-
-  for (const [userId, total] of totalByUser) {
-    const score = Math.round((total / maxTotal) * 100);
-
-    await db.projectMember.updateMany({
-      where: { projectId, userId },
-      data: { contributionScore: score },
-    });
-
-    try {
-      await db.scoreSnapshot.create({
-        data: {
-          projectMember: {
-            connect: { projectId_userId: { projectId, userId } },
-          },
-          score,
-          reason: `GitHub activity: ${total.toFixed(1)} weighted events`,
-        },
-      });
-    } catch {
-      // No-op — member row may not exist if identity is stale.
-    }
-  }
+  revalidatePath(`/projects/${projectId}/leaderboard`);
+  revalidatePath(`/projects/${projectId}/members`);
 }
