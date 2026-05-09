@@ -14,6 +14,7 @@ import {
   Moon,
   PanelLeftClose,
   PanelLeftOpen,
+  SquareKanban,
   Sun,
   Trophy,
   Users,
@@ -263,6 +264,15 @@ export function AppShell({
                 icon={<GitBranch size={16} />}
                 active={pathname.startsWith(
                   `/projects/${currentProject.id}/sources`,
+                )}
+                collapsed={collapsed}
+              />
+              <SidebarItem
+                href={`/projects/${currentProject.id}/jira`}
+                label="Jira"
+                icon={<SquareKanban size={16} />}
+                active={pathname.startsWith(
+                  `/projects/${currentProject.id}/jira`,
                 )}
                 collapsed={collapsed}
               />

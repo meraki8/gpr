@@ -20,7 +20,6 @@ export async function acceptInvite(formData: FormData) {
     where: { token: parsed.data.token },
   });
   if (!invite) throw new Error("Invite not found");
-  if (invite.acceptedAt) throw new Error("Invite already used");
   if (invite.expiresAt < new Date()) throw new Error("Invite expired");
 
   const existing = await db.projectMember.findUnique({
@@ -28,6 +27,18 @@ export async function acceptInvite(formData: FormData) {
       projectId_userId: { projectId: invite.projectId, userId: user.id },
     },
   });
+
+  if (invite.acceptedAt) {
+    // claimPendingInvites (called inside requireDbUser) already accepted
+    // this invite and created the member row for a new user. Treat it as
+    // success and redirect — don't throw "already used".
+    if (existing) {
+      revalidatePath(`/projects/${invite.projectId}`);
+      revalidatePath(`/projects/${invite.projectId}/members`);
+      redirect(`/projects/${invite.projectId}`);
+    }
+    throw new Error("Invite already used");
+  }
 
   if (existing) {
     await db.projectInvite.update({
@@ -51,5 +62,6 @@ export async function acceptInvite(formData: FormData) {
   }
 
   revalidatePath(`/projects/${invite.projectId}`);
+  revalidatePath(`/projects/${invite.projectId}/members`);
   redirect(`/projects/${invite.projectId}`);
 }
