@@ -379,6 +379,20 @@ model ScoreSnapshot {
   @@index([computedAt])
 }
 
+// Project-level health score snapshots — taken after each transcript
+// analysis so we can render an "X since last meeting" trend without
+// recomputing the historical formula from scratch.
+model ProjectHealthSnapshot {
+  id            String   @id @default(cuid())
+  projectId     String
+  score         Int
+  matchReportId String?  @unique
+  reason        String   @db.Text
+  computedAt    DateTime @default(now())
+
+  @@index([projectId, computedAt])
+}
+
 // =================== KNOWLEDGE BASE ===================
 
 model KnowledgeEntry {

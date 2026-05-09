@@ -19,6 +19,7 @@ import {
 } from "@/lib/kb";
 import { CAPABILITIES, resolveCapability } from "@/lib/capabilities";
 import { recomputeMemberScores } from "@/lib/scoring";
+import { recordProjectHealthSnapshot } from "@/lib/health";
 
 const InviteSchema = z.object({
   projectId: z.string().min(1),
@@ -514,6 +515,18 @@ export async function analyzeTranscript(formData: FormData) {
     await recomputeMemberScores(projectId, "transcript analysis");
   } catch (err) {
     console.error("Failed to recompute member scores:", err);
+  }
+
+  // 8. Snapshot the project health score against this report so the
+  // overview can show "X since last meeting".
+  try {
+    await recordProjectHealthSnapshot(
+      projectId,
+      "transcript analysis",
+      matchReport.id,
+    );
+  } catch (err) {
+    console.error("Failed to snapshot project health:", err);
   }
 
   revalidatePath(`/projects/${projectId}`);

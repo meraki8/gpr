@@ -183,6 +183,26 @@ export async function computeProjectHealth(
   };
 }
 
+// Persist a snapshot row with the current health score, optionally
+// tied to a MatchReport so the trend arrow can show "X since last
+// meeting". Best-effort — caller decides whether to surface failures.
+export async function recordProjectHealthSnapshot(
+  projectId: string,
+  reason: string,
+  matchReportId: string | null = null,
+) {
+  const breakdown = await computeProjectHealth(projectId);
+  await db.projectHealthSnapshot.create({
+    data: {
+      projectId,
+      score: breakdown.score,
+      matchReportId,
+      reason,
+    },
+  });
+  return breakdown.score;
+}
+
 function zeroBreakdown(): HealthBreakdown {
   return {
     score: 0,

@@ -404,6 +404,33 @@ export async function getProjectOverview(projectId: string) {
 
   const health = await computeProjectHealth(projectId);
 
+  // Trend = current health vs the snapshot taken right before the
+  // most recent transcript analysis. Snapshots are written *after*
+  // analysis, so the most recent snapshot is the score *as of* the
+  // latest meeting. To answer "since last meeting" we compare today
+  // against the second-most-recent snapshot. If only one snapshot
+  // exists we fall back to comparing against it directly so the
+  // first analysis still shows a delta from the implicit 100
+  // baseline. Wrapped in try/catch so the page still renders if the
+  // migration that introduced this table hasn't run yet.
+  let previousHealthScore: number | null = null;
+  try {
+    const recentSnapshots = await db.projectHealthSnapshot.findMany({
+      where: { projectId },
+      orderBy: { computedAt: "desc" },
+      take: 2,
+      select: { score: true, computedAt: true },
+    });
+    previousHealthScore =
+      recentSnapshots.length >= 2
+        ? recentSnapshots[1].score
+        : (recentSnapshots[0]?.score ?? null);
+  } catch (err) {
+    console.error("[overview] health snapshot lookup failed:", err);
+  }
+  const healthTrend =
+    previousHealthScore !== null ? health.score - previousHealthScore : 0;
+
   return {
     project,
     isOwner,
@@ -415,6 +442,8 @@ export async function getProjectOverview(projectId: string) {
     },
     healthScore: health.score,
     healthBreakdown: health,
+    healthTrend,
+    previousHealthScore,
     latestReport,
     timeline,
     commitments,

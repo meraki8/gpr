@@ -5,13 +5,17 @@ import {
   BookOpen,
   FileText,
   GitCommit,
+  Minus,
   ScrollText,
+  TrendingDown,
+  TrendingUp,
   Trophy,
   UserPlus,
   Users,
 } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { ExpandableBrief } from "@/components/overview/expandable-brief";
+import { HealthBreakdown } from "@/components/overview/health-breakdown";
 import { LiveCountdown } from "@/components/overview/live-countdown";
 import { AskGprTrigger } from "@/components/overview/ask-gpr-trigger";
 import { RefCard, cardKindFromCardType } from "@/components/ref-card";
@@ -39,6 +43,9 @@ export default async function ProjectPage({
     isOwner,
     counts,
     healthScore,
+    healthBreakdown,
+    healthTrend,
+    previousHealthScore,
     latestReport,
     timeline,
     commitments,
@@ -67,6 +74,9 @@ export default async function ProjectPage({
           project={project}
           counts={counts}
           healthScore={healthScore}
+          healthBreakdown={healthBreakdown}
+          healthTrend={healthTrend}
+          previousHealthScore={previousHealthScore}
           isOwner={isOwner}
         />
 
@@ -124,11 +134,17 @@ function ProjectHeader({
   project,
   counts,
   healthScore,
+  healthBreakdown,
+  healthTrend,
+  previousHealthScore,
   isOwner,
 }: {
   project: Overview["project"];
   counts: Overview["counts"];
   healthScore: number;
+  healthBreakdown: Overview["healthBreakdown"];
+  healthTrend: number;
+  previousHealthScore: number | null;
   isOwner: boolean;
 }) {
   const healthColor =
@@ -198,12 +214,34 @@ function ProjectHeader({
             borderRadius: 12,
             padding: "20px 22px",
             background: "var(--paper)",
+            position: "relative",
           }}
         >
-          <div className="label" style={{ marginBottom: 12 }}>
-            Project health
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              marginBottom: 12,
+            }}
+          >
+            <span className="label">Project health</span>
+            <HealthBreakdown breakdown={healthBreakdown} />
           </div>
-          <Score value={healthScore} size={84} color={healthColor} />
+          <div
+            style={{
+              display: "flex",
+              alignItems: "baseline",
+              gap: 12,
+              flexWrap: "wrap",
+            }}
+          >
+            <Score value={healthScore} size={84} color={healthColor} />
+            <HealthTrendChip
+              trend={healthTrend}
+              hasPrevious={previousHealthScore !== null}
+            />
+          </div>
           <div
             className="mute-ink"
             style={{ fontSize: 12, marginTop: 12, lineHeight: 1.45 }}
@@ -254,6 +292,68 @@ function ProjectHeader({
         }
       `}</style>
     </section>
+  );
+}
+
+function HealthTrendChip({
+  trend,
+  hasPrevious,
+}: {
+  trend: number;
+  hasPrevious: boolean;
+}) {
+  // No prior snapshot — nothing to compare against yet.
+  if (!hasPrevious || trend === 0) {
+    return (
+      <span
+        title={
+          hasPrevious
+            ? "No change since last meeting"
+            : "No prior meeting to compare against"
+        }
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 4,
+          fontSize: 13,
+          color: "var(--mute)",
+          fontWeight: 500,
+        }}
+      >
+        <Minus size={14} />
+        <span className="num">—</span>
+      </span>
+    );
+  }
+  const positive = trend > 0;
+  const color = positive ? "var(--status-good, #16a34a)" : "var(--red)";
+  const Icon = positive ? TrendingUp : TrendingDown;
+  return (
+    <span
+      title={`${positive ? "+" : ""}${trend} since last meeting`}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 5,
+        fontSize: 14,
+        fontWeight: 700,
+        color,
+        letterSpacing: "-0.01em",
+        lineHeight: 1,
+      }}
+    >
+      <Icon size={16} strokeWidth={2.5} />
+      <span className="num">
+        {positive ? "+" : ""}
+        {trend}
+      </span>
+      <span
+        className="mute-ink"
+        style={{ fontSize: 11, fontWeight: 500, marginLeft: 2 }}
+      >
+        since last meeting
+      </span>
+    </span>
   );
 }
 
