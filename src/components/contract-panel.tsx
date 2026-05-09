@@ -85,8 +85,6 @@ export function ContractPanel({
     });
   }
 
-  const signedIds = new Set(contract?.signatures.map((s) => s.userId) ?? []);
-
   return (
     <div style={{ maxWidth: 780 }}>
       {error && (
@@ -95,11 +93,11 @@ export function ContractPanel({
           style={{
             padding: "12px 16px",
             marginBottom: 24,
-            background: "#fee2e2",
-            border: "1px solid #fca5a5",
+            background: "color-mix(in srgb, var(--red) 10%, transparent)",
+            border: "1px solid color-mix(in srgb, var(--red) 30%, transparent)",
             borderRadius: 6,
             fontSize: 14,
-            color: "#991b1b",
+            color: "var(--red)",
           }}
         >
           {error}
@@ -107,13 +105,11 @@ export function ContractPanel({
       )}
 
       {!contract ? (
-        // No contract yet
         isOwner ? (
           <button
-            className="btn-primary"
+            className="pill"
             onClick={handleGenerate}
             disabled={isPending}
-            style={{ marginBottom: 40 }}
           >
             {isPending ? "Generating…" : "Generate Contract"}
           </button>
@@ -128,7 +124,6 @@ export function ContractPanel({
               padding: "40px 48px",
               background: "var(--paper)",
               marginBottom: 32,
-              position: "relative",
             }}
           >
             {isEditing ? (
@@ -136,31 +131,19 @@ export function ContractPanel({
                 <textarea
                   value={editContent}
                   onChange={(e) => setEditContent(e.target.value)}
-                  style={{
-                    width: "100%",
-                    minHeight: 480,
-                    fontSize: 14,
-                    lineHeight: 1.7,
-                    fontFamily: "inherit",
-                    border: "1px solid var(--line)",
-                    borderRadius: 4,
-                    padding: "16px",
-                    resize: "vertical",
-                    background: "var(--bg)",
-                    color: "var(--ink)",
-                    boxSizing: "border-box",
-                  }}
+                  className="field field-lg"
+                  style={{ minHeight: 480 }}
                 />
                 <div style={{ display: "flex", gap: 10, marginTop: 16 }}>
                   <button
-                    className="btn-primary"
+                    className="pill"
                     onClick={handleSaveEdit}
                     disabled={isPending || !editContent.trim()}
                   >
                     {isPending ? "Saving…" : "Save changes"}
                   </button>
                   <button
-                    className="btn-ghost"
+                    className="pill pill-ghost"
                     onClick={handleCancelEdit}
                     disabled={isPending}
                   >
@@ -196,7 +179,7 @@ export function ContractPanel({
                 >
                   <a
                     href={`/api/projects/${projectId}/contract-pdf`}
-                    className="btn-ghost"
+                    className="pill pill-ghost pill-sm"
                     style={{ textDecoration: "none" }}
                   >
                     Download PDF
@@ -204,7 +187,7 @@ export function ContractPanel({
                   {isOwner && (
                     <>
                       <button
-                        className="btn-ghost"
+                        className="pill pill-ghost pill-sm"
                         onClick={() => {
                           setEditContent(contract.content);
                           setIsEditing(true);
@@ -213,10 +196,9 @@ export function ContractPanel({
                         Edit contract
                       </button>
                       <button
-                        className="btn-ghost"
+                        className="pill pill-ghost pill-sm"
                         onClick={handleGenerate}
                         disabled={isPending}
-                        style={{ color: "var(--mute)" }}
                       >
                         {isPending ? "Regenerating…" : "Regenerate"}
                       </button>
@@ -232,7 +214,7 @@ export function ContractPanel({
             <div className="label" style={{ marginBottom: 20 }}>
               Signatures — {contract.signatures.length} / {members.length}
             </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               {members.map((m) => {
                 const sig = contract.signatures.find((s) => s.userId === m.userId);
                 return (
@@ -245,30 +227,22 @@ export function ContractPanel({
                       padding: "14px 20px",
                       border: "1px solid var(--line)",
                       borderRadius: 6,
-                      background: sig ? "var(--paper)" : "var(--bg)",
+                      background: "var(--paper)",
                     }}
                   >
                     <div>
                       <span style={{ fontSize: 14, fontWeight: 500 }}>
                         {m.name}
                       </span>
-                      <span
-                        className="mute-ink"
-                        style={{ fontSize: 12, marginLeft: 8 }}
-                      >
+                      <span className="label" style={{ marginLeft: 10 }}>
                         {m.role}
                       </span>
                     </div>
                     {sig ? (
                       <div style={{ textAlign: "right" }}>
                         <div
-                          style={{
-                            fontSize: 12,
-                            color: "#16a34a",
-                            fontWeight: 600,
-                            letterSpacing: "0.04em",
-                            textTransform: "uppercase",
-                          }}
+                          className="label"
+                          style={{ color: "var(--status-good)" }}
                         >
                           Signed
                         </div>
@@ -282,16 +256,7 @@ export function ContractPanel({
                         </div>
                       </div>
                     ) : (
-                      <span
-                        style={{
-                          fontSize: 12,
-                          color: "var(--mute)",
-                          letterSpacing: "0.04em",
-                          textTransform: "uppercase",
-                        }}
-                      >
-                        Pending
-                      </span>
+                      <span className="label">Pending</span>
                     )}
                   </div>
                 );
@@ -299,7 +264,7 @@ export function ContractPanel({
             </div>
           </section>
 
-          {/* Sign section — shown to unsigned members */}
+          {/* Sign section */}
           {!signed ? (
             <section
               style={{
@@ -313,14 +278,18 @@ export function ContractPanel({
               <div className="label" style={{ marginBottom: 8 }}>
                 Sign this contract
               </div>
-              <p className="body mute-ink" style={{ fontSize: 13, marginBottom: 24 }}>
-                Type your full name below to confirm you have read and agree to the terms of this contract.
+              <p
+                className="mute-ink"
+                style={{ fontSize: 13, marginBottom: 24, margin: "8px 0 24px" }}
+              >
+                Type your full name to confirm you have read and agree to the terms.
               </p>
               <div style={{ display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap" }}>
                 <div style={{ flex: 1, minWidth: 220 }}>
                   <label
                     htmlFor="typed-name"
-                    style={{ fontSize: 11, letterSpacing: "0.06em", textTransform: "uppercase", color: "var(--mute)", display: "block", marginBottom: 6 }}
+                    className="label"
+                    style={{ display: "block", marginBottom: 8 }}
                   >
                     Full name
                   </label>
@@ -330,17 +299,11 @@ export function ContractPanel({
                     value={typedName}
                     onChange={(e) => setTypedName(e.target.value)}
                     placeholder="Type your name exactly"
+                    className="field"
                     style={{
-                      width: "100%",
-                      padding: "10px 14px",
-                      fontSize: 15,
                       fontFamily: "Georgia, serif",
                       fontStyle: "italic",
-                      border: "1px solid var(--line)",
-                      borderRadius: 4,
-                      background: "var(--bg)",
-                      color: "var(--ink)",
-                      boxSizing: "border-box",
+                      fontSize: 15,
                     }}
                     onKeyDown={(e) => {
                       if (e.key === "Enter" && typedName.trim()) handleSign();
@@ -348,10 +311,10 @@ export function ContractPanel({
                   />
                 </div>
                 <button
-                  className="btn-primary"
+                  className="pill"
                   onClick={handleSign}
                   disabled={isPending || !typedName.trim()}
-                  style={{ whiteSpace: "nowrap" }}
+                  style={{ whiteSpace: "nowrap", flexShrink: 0 }}
                 >
                   {isPending ? "Signing…" : "I agree — sign contract"}
                 </button>
@@ -362,9 +325,9 @@ export function ContractPanel({
               style={{
                 marginTop: 40,
                 padding: "24px 32px",
-                border: "1px solid #86efac",
+                border: "1px solid var(--line)",
                 borderRadius: 8,
-                background: "#f0fdf4",
+                background: "var(--paper)",
                 display: "flex",
                 alignItems: "center",
                 gap: 16,
@@ -372,25 +335,25 @@ export function ContractPanel({
             >
               <div
                 style={{
-                  width: 36,
-                  height: 36,
+                  width: 32,
+                  height: 32,
                   borderRadius: "50%",
-                  background: "#16a34a",
+                  background: "var(--status-good)",
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
                   flexShrink: 0,
                   color: "#fff",
-                  fontSize: 18,
+                  fontSize: 16,
                 }}
               >
                 ✓
               </div>
               <div>
-                <div style={{ fontSize: 14, fontWeight: 600, color: "#15803d" }}>
+                <div style={{ fontSize: 14, fontWeight: 600, color: "var(--status-good)" }}>
                   You have signed this contract
                 </div>
-                <div style={{ fontSize: 13, color: "#16a34a", marginTop: 2 }}>
+                <div className="mute-ink" style={{ fontSize: 13, marginTop: 2 }}>
                   Your signature has been recorded with a timestamp.
                 </div>
               </div>
