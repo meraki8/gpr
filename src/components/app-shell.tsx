@@ -257,9 +257,22 @@ export function AppShell({
                 )}
                 collapsed={collapsed}
               />
+              {!collapsed && (
+                <div
+                  style={{
+                    fontSize: 10,
+                    letterSpacing: "0.08em",
+                    textTransform: "uppercase",
+                    color: SIDEBAR_MUTE,
+                    padding: "10px 10px 4px",
+                  }}
+                >
+                  Sources
+                </div>
+              )}
               <SidebarItem
                 href={`/projects/${currentProject.id}/sources`}
-                label="Sources"
+                label="GitHub"
                 icon={<GitBranch size={16} />}
                 active={pathname.startsWith(
                   `/projects/${currentProject.id}/sources`,
