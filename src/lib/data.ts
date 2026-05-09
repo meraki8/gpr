@@ -538,7 +538,7 @@ export async function getProjectSources(
       contributionSources: { orderBy: { createdAt: "asc" } },
       contributionEvents: {
         where: eventSourceType ? { sourceType: eventSourceType } : undefined,
-        orderBy: { occurredAt: "desc" },
+        orderBy: [{ occurredAt: "desc" }, { createdAt: "desc" }],
         skip: (page - 1) * EVENTS_PER_PAGE,
         take: EVENTS_PER_PAGE + 1,
       },

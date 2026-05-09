@@ -15,10 +15,12 @@ export type JiraAuth = {
 // need plain text for the AC parser and Claude prompts, so the
 // renderer here is intentionally minimal — concatenates text leaves
 // and inserts newlines for paragraphs / list items / headings.
-type AdfNode = {
+export type AdfNode = {
   type?: string;
   text?: string;
   content?: AdfNode[];
+  attrs?: Record<string, unknown>;
+  [key: string]: unknown;
 };
 
 export type JiraIssue = {
@@ -32,6 +34,7 @@ export type JiraIssue = {
   dueDate: string | null;
   priority: string | null;
   description: string;
+  descriptionAdf: AdfNode | null;
   updated: string;
   created: string;
   url: string;
@@ -59,12 +62,24 @@ function adfToPlainText(node: AdfNode | undefined | null): string {
   if (node.type === "text" && typeof node.text === "string") return node.text;
   const childText = (node.content ?? []).map(adfToPlainText).join("");
   switch (node.type) {
+    case "doc":
+    case "bulletList":
+    case "orderedList":
+    case "taskList":
+    case "panel":
+    case "table":
+      return childText;
     case "paragraph":
     case "heading":
     case "listItem":
     case "blockquote":
     case "codeBlock":
       return `${childText}\n`;
+    case "tableRow":
+      return `${childText}\n`;
+    case "tableCell":
+    case "tableHeader":
+      return `${childText.trim()}\n`;
     case "hardBreak":
       return "\n";
     // Jira's native checklist UI emits taskList -> taskItem nodes
@@ -110,6 +125,15 @@ type RawChangelog = {
   maxResults?: number;
   total?: number;
   isLast?: boolean;
+};
+
+type RawTransition = {
+  id?: string;
+  name?: string;
+  to?: {
+    name?: string;
+    statusCategory?: { key?: string };
+  };
 };
 
 // Jira returns sprint info on a custom field whose ID varies per
@@ -160,6 +184,7 @@ function toJiraIssue(raw: RawIssue, baseUrl: string): JiraIssue {
     dueDate: raw.fields.duedate ?? null,
     priority: raw.fields.priority?.name ?? null,
     description: adfToPlainText(raw.fields.description ?? null).trim(),
+    descriptionAdf: raw.fields.description ?? null,
     updated: raw.fields.updated ?? new Date().toISOString(),
     created: raw.fields.created ?? new Date().toISOString(),
     url: `${baseUrl}/browse/${raw.key}`,
@@ -172,6 +197,219 @@ const HEADERS_BASE: HeadersInit = {
   Accept: "application/json",
   "User-Agent": "GPR/1.0",
 };
+
+function normalizeStatusName(name: string | undefined): string {
+  return (name ?? "").trim().toLowerCase().replace(/[\s_-]+/g, " ");
+}
+
+function transitionScore(
+  transition: RawTransition,
+  target: "in_progress" | "done",
+): number {
+  const toName = normalizeStatusName(transition.to?.name);
+  const transitionName = normalizeStatusName(transition.name);
+  const category = transition.to?.statusCategory?.key?.toLowerCase() ?? "";
+  const combined = `${transitionName} ${toName}`;
+  let score = 0;
+
+  if (target === "done") {
+    if (category === "done") score += 100;
+    if (/^(done|complete|completed|closed|resolved)$/.test(toName)) score += 60;
+    if (/(done|complete|close|resolve|finish)/.test(combined)) score += 25;
+    return score;
+  }
+
+  if (/^(in progress|doing|development|in development)$/.test(toName)) {
+    score += 100;
+  }
+  if (/(in progress|doing|development|start progress)/.test(combined)) {
+    score += 50;
+  }
+  if (category === "indeterminate") score += 30;
+  if (/(block|blocked|review|test|qa|done|complete|close|resolve)/.test(toName)) {
+    score -= 80;
+  }
+  return score;
+}
+
+export type JiraTransitionResult =
+  | {
+      ok: true;
+      transitionId: string;
+      transitionName: string;
+      toStatus: string;
+    }
+  | {
+      ok: false;
+      reason: string;
+      availableTransitions: string[];
+    };
+
+async function fetchIssueTransitions(
+  auth: JiraAuth,
+  issueKey: string,
+): Promise<RawTransition[]> {
+  const res = await fetch(
+    `${auth.baseUrl}/rest/api/3/issue/${encodeURIComponent(issueKey)}/transitions`,
+    {
+      headers: { ...HEADERS_BASE, Authorization: authHeader(auth) },
+      cache: "no-store",
+    },
+  );
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(
+      `Jira transitions ${issueKey}: ${res.status} ${res.statusText} - ${text.slice(0, 300)}`,
+    );
+  }
+  const json = (await res.json()) as { transitions?: RawTransition[] };
+  return json.transitions ?? [];
+}
+
+export async function transitionIssueTo(
+  auth: JiraAuth,
+  issueKey: string,
+  target: "in_progress" | "done",
+): Promise<JiraTransitionResult> {
+  let transitions: RawTransition[];
+  try {
+    transitions = await fetchIssueTransitions(auth, issueKey);
+  } catch (err) {
+    return {
+      ok: false,
+      reason: err instanceof Error ? err.message : "Could not load Jira transitions",
+      availableTransitions: [],
+    };
+  }
+
+  const availableTransitions = transitions.map((t) =>
+    [t.name, t.to?.name].filter(Boolean).join(" -> "),
+  );
+  const ranked = transitions
+    .filter((t): t is RawTransition & { id: string } => Boolean(t.id))
+    .map((transition) => ({
+      transition,
+      score: transitionScore(transition, target),
+    }))
+    .filter((item) => item.score > 0)
+    .sort((a, b) => b.score - a.score);
+
+  const best = ranked[0]?.transition;
+  if (!best) {
+    return {
+      ok: false,
+      reason: `No available Jira workflow transition to ${target === "done" ? "Done" : "In Progress"}`,
+      availableTransitions,
+    };
+  }
+
+  const res = await fetch(
+    `${auth.baseUrl}/rest/api/3/issue/${encodeURIComponent(issueKey)}/transitions`,
+    {
+      method: "POST",
+      headers: {
+        ...HEADERS_BASE,
+        Authorization: authHeader(auth),
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ transition: { id: best.id } }),
+      cache: "no-store",
+    },
+  );
+
+  if (!res.ok) {
+    const text = await res.text();
+    return {
+      ok: false,
+      reason: `Jira transition ${issueKey}: ${res.status} ${res.statusText} - ${text.slice(0, 300)}`,
+      availableTransitions,
+    };
+  }
+
+  return {
+    ok: true,
+    transitionId: best.id,
+    transitionName: best.name ?? best.id,
+    toStatus: best.to?.name ?? "",
+  };
+}
+
+function markUncheckedBoxesDoneInText(text: string): string {
+  return text.replace(/\[\s\]/g, "[x]");
+}
+
+function markAdfTasksDone(node: AdfNode): { node: AdfNode; changed: boolean } {
+  let changed = false;
+  const next: AdfNode = { ...node };
+
+  if (typeof node.text === "string") {
+    const text = markUncheckedBoxesDoneInText(node.text);
+    if (text !== node.text) {
+      next.text = text;
+      changed = true;
+    }
+  }
+
+  if (node.type === "taskItem") {
+    const attrs = { ...(node.attrs ?? {}) };
+    if (attrs.state !== "DONE") {
+      attrs.state = "DONE";
+      next.attrs = attrs;
+      changed = true;
+    }
+  }
+
+  if (Array.isArray(node.content)) {
+    const content = node.content.map((child) => {
+      const result = markAdfTasksDone(child);
+      if (result.changed) changed = true;
+      return result.node;
+    });
+    next.content = content;
+  }
+
+  return { node: next, changed };
+}
+
+export async function markIssueDescriptionTasksDone(
+  auth: JiraAuth,
+  issueKey: string,
+  description: AdfNode | null,
+): Promise<{ ok: boolean; updated: boolean; reason?: string }> {
+  if (!description) {
+    return { ok: true, updated: false, reason: "Issue has no description" };
+  }
+
+  const result = markAdfTasksDone(description);
+  if (!result.changed) {
+    return { ok: true, updated: false, reason: "No unchecked checklist items found" };
+  }
+
+  const res = await fetch(
+    `${auth.baseUrl}/rest/api/3/issue/${encodeURIComponent(issueKey)}`,
+    {
+      method: "PUT",
+      headers: {
+        ...HEADERS_BASE,
+        Authorization: authHeader(auth),
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ fields: { description: result.node } }),
+      cache: "no-store",
+    },
+  );
+
+  if (!res.ok) {
+    const text = await res.text();
+    return {
+      ok: false,
+      updated: false,
+      reason: `Jira description update ${issueKey}: ${res.status} ${res.statusText} - ${text.slice(0, 300)}`,
+    };
+  }
+
+  return { ok: true, updated: true };
+}
 
 // Pulls every issue in the project via the new /rest/api/3/search/jql
 // endpoint. The legacy /rest/api/3/search was retired in 2025

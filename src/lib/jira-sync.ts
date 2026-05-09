@@ -4,7 +4,6 @@ import { addKnowledgeEntries, KB_SOURCES } from "./kb";
 import { recomputeMemberScores } from "./scoring";
 import { fetchRepositoryCodeEvidence, type GhCodeEvidence } from "./github";
 import {
-  fetchIssueComments,
   fetchIssueStatusChanges,
   searchProjectIssues,
   type JiraAuth,
@@ -114,7 +113,7 @@ async function fetchGithubEvidenceForIssue(
   if (repos.length === 0) return [];
 
   const evidence: GhCodeEvidence[] = [];
-  const criteriaText = [issue.summary, issue.description];
+  const criteriaText = [issue.description];
   for (const repo of repos.slice(0, 3)) {
     const [owner, name] = repo.split("/");
     if (!owner || !name) continue;
@@ -296,15 +295,14 @@ export async function syncJiraProject(
     await Promise.all(
       batch.map(async (issue) => {
         try {
-          const [comments, githubEvidence] = await Promise.all([
-            fetchIssueComments(ctx.auth, issue.key),
-            fetchGithubEvidenceForIssue(githubRepos, issue, githubAccessToken),
-          ]);
+          const githubEvidence = await fetchGithubEvidenceForIssue(
+            githubRepos,
+            issue,
+            githubAccessToken,
+          );
           const verdict = await judgeAcceptanceCriteria({
             issueKey: issue.key,
-            summary: issue.summary,
             description: issue.description,
-            comments,
             githubEvidence,
           });
           acVerdictByIssueId.set(issue.id, verdict);

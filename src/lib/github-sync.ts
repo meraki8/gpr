@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { Prisma } from "@prisma/client";
 import { db } from "./db";
 import { ai, AI_MODEL } from "./ai";
 import {
@@ -11,7 +12,14 @@ import {
   type GhCommit,
   type GhPullRequest,
 } from "./github";
-import { searchProjectIssues, type JiraAuth, type JiraIssue } from "./jira";
+import {
+  markIssueDescriptionTasksDone,
+  searchProjectIssues,
+  transitionIssueTo,
+  type JiraAuth,
+  type JiraIssue,
+  type JiraTransitionResult,
+} from "./jira";
 import { KB_SOURCES, addKnowledgeEntries } from "./kb";
 import { recomputeMemberScores } from "./scoring";
 
@@ -35,9 +43,25 @@ export type GithubSyncSummary = {
   repos: number;
   commits: number;
   pullRequests: number;
+  jiraAutoProgressed: number;
+  jiraAutoDone: number;
   jiraStatusFailures: number;
   jiraDoneFailures: number;
   errors: string[];
+};
+
+type JiraIssueContext = {
+  auth: JiraAuth;
+  projectKey: string;
+  issues: JiraIssue[];
+  issuesByKey: Map<string, JiraIssue>;
+};
+
+type JiraAutomationResult = {
+  needed: boolean;
+  actionTaken: boolean;
+  failed: boolean;
+  warning?: string;
 };
 
 function jiraConfigToAuth(config: JiraSourceConfig | null): {
@@ -67,11 +91,9 @@ function issueNeedsDone(issue: JiraIssue): boolean {
   return issue.statusCategory !== "done";
 }
 
-async function maybeLoadJiraIssueMap(projectId: string): Promise<{
-  projectKey: string;
-  issues: JiraIssue[];
-  issuesByKey: Map<string, JiraIssue>;
-} | null> {
+async function maybeLoadJiraIssueMap(
+  projectId: string,
+): Promise<JiraIssueContext | null> {
   const source = await db.contributionSource.findUnique({
     where: { projectId_sourceType: { projectId, sourceType: "JIRA" } },
   });
@@ -82,9 +104,24 @@ async function maybeLoadJiraIssueMap(projectId: string): Promise<{
 
   const issues = await searchProjectIssues(ctx.auth, ctx.projectKey);
   return {
+    auth: ctx.auth,
     projectKey: ctx.projectKey.toUpperCase(),
     issues,
     issuesByKey: new Map(issues.map((issue) => [issue.key.toUpperCase(), issue])),
+  };
+}
+
+function transitionPayload(result: JiraTransitionResult): Prisma.InputJsonObject {
+  if (result.ok) {
+    return {
+      transitionId: result.transitionId,
+      transitionName: result.transitionName,
+      transitionedTo: result.toStatus,
+    };
+  }
+  return {
+    transitionError: result.reason,
+    availableTransitions: result.availableTransitions,
   };
 }
 
@@ -188,9 +225,11 @@ async function checkCommitJiraProgress(input: {
   commit: GhCommit;
   files: GhChangedFile[];
   userId: string | null;
-  jira: { projectKey: string; issues: JiraIssue[]; issuesByKey: Map<string, JiraIssue> } | null;
-}): Promise<boolean> {
-  if (!input.jira) return false;
+  jira: JiraIssueContext | null;
+}): Promise<JiraAutomationResult> {
+  if (!input.jira) {
+    return { needed: false, actionTaken: false, failed: false };
+  }
 
   const match = await matchJiraIssueFromCode({
     jira: input.jira,
@@ -199,7 +238,16 @@ async function checkCommitJiraProgress(input: {
     files: input.files,
   });
   const issue = match.issue;
-  if (!issue || !issueNeedsProgress(issue)) return false;
+  if (!issue || !issueNeedsProgress(issue)) {
+    return { needed: false, actionTaken: false, failed: false };
+  }
+
+  const transition = await transitionIssueTo(
+    input.jira.auth,
+    issue.key,
+    "in_progress",
+  );
+  const transitioned = transition.ok;
 
   const externalId = `jira-progress:${input.commit.sha}:${issue.key}`;
   const result = await db.contributionEvent.createMany({
@@ -209,8 +257,13 @@ async function checkCommitJiraProgress(input: {
         sourceId: input.sourceId,
         sourceType: "GITHUB",
         externalId,
-        eventType: "commit_jira_not_in_progress",
+        eventType: transitioned
+          ? "jira_auto_in_progress"
+          : "jira_progress_transition_failed",
         payloadJson: {
+          title: transitioned
+            ? `Moved ${issue.key} to In Progress`
+            : `Could not move ${issue.key} to In Progress`,
           repo: input.repo,
           sha: input.commit.sha,
           login: input.commit.author?.login ?? null,
@@ -218,6 +271,9 @@ async function checkCommitJiraProgress(input: {
           issueKey: issue.key,
           issueStatus: issue.statusName,
           issueUrl: issue.url,
+          action: "move_to_in_progress",
+          transitioned,
+          ...transitionPayload(transition),
           matchConfidence: match.confidence,
           matchReason: match.reason,
           files: input.files.slice(0, 10).map((f) => f.filename),
@@ -230,9 +286,15 @@ async function checkCommitJiraProgress(input: {
     skipDuplicates: true,
   });
 
-  if (result.count === 0) return false;
+  if (result.count === 0) {
+    return {
+      needed: true,
+      actionTaken: transitioned,
+      failed: !transitioned,
+    };
+  }
 
-  if (input.userId) {
+  if (!transitioned && input.userId) {
     await db.card.create({
       data: {
         projectId: input.projectId,
@@ -247,6 +309,10 @@ async function checkCommitJiraProgress(input: {
           issueStatus: issue.statusName,
           issueUrl: issue.url,
           summary: issue.summary,
+          transitionError: transition.ok ? null : transition.reason,
+          availableTransitions: transition.ok
+            ? []
+            : transition.availableTransitions,
           matchConfidence: match.confidence,
           matchReason: match.reason,
           files: input.files.slice(0, 10).map((f) => f.filename),
@@ -255,7 +321,11 @@ async function checkCommitJiraProgress(input: {
     });
   }
 
-  return true;
+  return {
+    needed: true,
+    actionTaken: transitioned,
+    failed: !transitioned,
+  };
 }
 
 async function checkMergedPrJiraDone(input: {
@@ -265,12 +335,18 @@ async function checkMergedPrJiraDone(input: {
   pullRequest: GhPullRequest;
   files: GhChangedFile[];
   userId: string | null;
-  jira: { projectKey: string; issues: JiraIssue[]; issuesByKey: Map<string, JiraIssue> } | null;
-}): Promise<boolean> {
-  if (!input.jira || !input.pullRequest.merged_at) return false;
+  jira: JiraIssueContext | null;
+}): Promise<JiraAutomationResult> {
+  if (!input.jira || !input.pullRequest.merged_at) {
+    return { needed: false, actionTaken: false, failed: false };
+  }
   const mergedAtMs = Date.parse(input.pullRequest.merged_at);
-  if (Number.isNaN(mergedAtMs)) return false;
-  if (Date.now() - mergedAtMs < 6 * 60 * 60 * 1000) return false;
+  if (Number.isNaN(mergedAtMs)) {
+    return { needed: false, actionTaken: false, failed: false };
+  }
+  if (Date.now() - mergedAtMs < 6 * 60 * 60 * 1000) {
+    return { needed: false, actionTaken: false, failed: false };
+  }
 
   const match = await matchJiraIssueFromCode({
     jira: input.jira,
@@ -279,7 +355,34 @@ async function checkMergedPrJiraDone(input: {
     files: input.files,
   });
   const issue = match.issue;
-  if (!issue || !issueNeedsDone(issue)) return false;
+  if (!issue || !issueNeedsDone(issue)) {
+    return { needed: false, actionTaken: false, failed: false };
+  }
+
+  let progressTransition: JiraTransitionResult | null = null;
+  let doneTransition = await transitionIssueTo(input.jira.auth, issue.key, "done");
+  if (!doneTransition.ok && issueNeedsProgress(issue)) {
+    progressTransition = await transitionIssueTo(
+      input.jira.auth,
+      issue.key,
+      "in_progress",
+    );
+    if (progressTransition.ok) {
+      doneTransition = await transitionIssueTo(input.jira.auth, issue.key, "done");
+    }
+  }
+
+  const transitioned = doneTransition.ok;
+  let checkboxResult:
+    | Awaited<ReturnType<typeof markIssueDescriptionTasksDone>>
+    | null = null;
+  if (transitioned) {
+    checkboxResult = await markIssueDescriptionTasksDone(
+      input.jira.auth,
+      issue.key,
+      issue.descriptionAdf,
+    );
+  }
 
   const externalId = `jira-done:${input.repo}:${input.pullRequest.number}:${issue.key}`;
   const result = await db.contributionEvent.createMany({
@@ -289,8 +392,13 @@ async function checkMergedPrJiraDone(input: {
         sourceId: input.sourceId,
         sourceType: "GITHUB",
         externalId,
-        eventType: "pr_jira_not_done_after_merge",
+        eventType: transitioned
+          ? "jira_auto_done_after_merge"
+          : "jira_done_transition_failed",
         payloadJson: {
+          title: transitioned
+            ? `Moved ${issue.key} to Done`
+            : `Could not move ${issue.key} to Done`,
           repo: input.repo,
           number: input.pullRequest.number,
           login: input.pullRequest.user?.login ?? null,
@@ -299,6 +407,17 @@ async function checkMergedPrJiraDone(input: {
           issueKey: issue.key,
           issueStatus: issue.statusName,
           issueUrl: issue.url,
+          action: "move_to_done",
+          transitioned,
+          ...(progressTransition
+            ? {
+                progressTransition: transitionPayload(progressTransition),
+              }
+            : {}),
+          doneTransition: transitionPayload(doneTransition),
+          checkboxesUpdated: checkboxResult?.updated ?? false,
+          checkboxUpdateError:
+            checkboxResult && !checkboxResult.ok ? checkboxResult.reason : null,
           matchConfidence: match.confidence,
           matchReason: match.reason,
           files: input.files.slice(0, 20).map((f) => f.filename),
@@ -311,9 +430,21 @@ async function checkMergedPrJiraDone(input: {
     skipDuplicates: true,
   });
 
-  if (result.count === 0) return false;
+  const warning =
+    checkboxResult && !checkboxResult.ok
+      ? checkboxResult.reason
+      : undefined;
 
-  if (input.userId) {
+  if (result.count === 0) {
+    return {
+      needed: true,
+      actionTaken: transitioned,
+      failed: !transitioned,
+      warning,
+    };
+  }
+
+  if (!transitioned && input.userId) {
     await db.card.create({
       data: {
         projectId: input.projectId,
@@ -329,6 +460,10 @@ async function checkMergedPrJiraDone(input: {
           issueStatus: issue.statusName,
           issueUrl: issue.url,
           summary: issue.summary,
+          doneTransition: transitionPayload(doneTransition),
+          progressTransition: progressTransition
+            ? transitionPayload(progressTransition)
+            : null,
           matchConfidence: match.confidence,
           matchReason: match.reason,
           files: input.files.slice(0, 20).map((f) => f.filename),
@@ -337,7 +472,12 @@ async function checkMergedPrJiraDone(input: {
     });
   }
 
-  return true;
+  return {
+    needed: true,
+    actionTaken: transitioned,
+    failed: !transitioned,
+    warning,
+  };
 }
 
 export async function syncGithubProject(
@@ -348,6 +488,8 @@ export async function syncGithubProject(
     repos: 0,
     commits: 0,
     pullRequests: 0,
+    jiraAutoProgressed: 0,
+    jiraAutoDone: 0,
     jiraStatusFailures: 0,
     jiraDoneFailures: 0,
     errors: [],
@@ -478,7 +620,7 @@ export async function syncGithubProject(
         );
         continue;
       }
-      const failed = await checkCommitJiraProgress({
+      const jiraProgress = await checkCommitJiraProgress({
         projectId,
         sourceId: source.id,
         repo,
@@ -487,7 +629,9 @@ export async function syncGithubProject(
         userId,
         jira,
       });
-      if (failed) summary.jiraStatusFailures += 1;
+      if (jiraProgress.actionTaken) summary.jiraAutoProgressed += 1;
+      if (jiraProgress.failed) summary.jiraStatusFailures += 1;
+      if (jiraProgress.warning) summary.errors.push(jiraProgress.warning);
     }
 
     let prs: GhPullRequest[] = [];
@@ -576,7 +720,7 @@ export async function syncGithubProject(
       const userId = pr.user?.login
         ? (usernameToUserId.get(pr.user.login.toLowerCase()) ?? null)
         : null;
-      const failed = await checkMergedPrJiraDone({
+      const jiraDone = await checkMergedPrJiraDone({
         projectId,
         sourceId: source.id,
         repo,
@@ -585,7 +729,9 @@ export async function syncGithubProject(
         userId,
         jira,
       });
-      if (failed) summary.jiraDoneFailures += 1;
+      if (jiraDone.actionTaken) summary.jiraAutoDone += 1;
+      if (jiraDone.failed) summary.jiraDoneFailures += 1;
+      if (jiraDone.warning) summary.errors.push(jiraDone.warning);
     }
   }
 
