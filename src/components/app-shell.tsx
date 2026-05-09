@@ -117,6 +117,13 @@ export function AppShell({
                 label="Sources"
                 active={pathname === `/projects/${currentProject.id}/sources`}
               />
+              <SidebarItem
+                href={`/projects/${currentProject.id}/kb`}
+                label="Knowledge base"
+                active={pathname.startsWith(
+                  `/projects/${currentProject.id}/kb`,
+                )}
+              />
             </nav>
           </>
         )}

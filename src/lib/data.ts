@@ -199,6 +199,42 @@ export async function getProjectSources(projectId: string) {
   return { project, isOwner: member.role === "OWNER" };
 }
 
+export async function getProjectKb(projectId: string, source?: string) {
+  const user = await requireDbUser();
+  const project = await db.project.findFirst({
+    where: {
+      id: projectId,
+      deletedAt: null,
+      members: { some: { userId: user.id } },
+    },
+    include: {
+      group: true,
+      members: { where: { userId: user.id }, take: 1 },
+    },
+  });
+  if (!project) notFound();
+
+  const entries = await db.knowledgeEntry.findMany({
+    where: {
+      projectId,
+      ...(source ? { source } : {}),
+    },
+    orderBy: { createdAt: "desc" },
+    take: 200,
+  });
+
+  // Source counts for the filter chips — separate query so the
+  // chip totals stay accurate even when a filter is active.
+  const counts = await db.knowledgeEntry.groupBy({
+    by: ["source"],
+    where: { projectId },
+    _count: { _all: true },
+  });
+
+  const isOwner = project.members[0]?.role === "OWNER";
+  return { project, entries, counts, isOwner };
+}
+
 export async function getMatchReport(reportId: string) {
   const user = await requireDbUser();
   const report = await db.matchReport.findFirst({

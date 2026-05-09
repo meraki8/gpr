@@ -11,6 +11,12 @@ import { sendInviteEmail } from "@/lib/email";
 import { ai, AI_MODEL } from "@/lib/ai";
 import { MatchAnalysis } from "@/lib/types";
 import { getBaseUrl } from "@/lib/url";
+import {
+  KB_SOURCES,
+  addKnowledgeEntries,
+  formatKbForPrompt,
+  getRecentKbEntries,
+} from "@/lib/kb";
 
 const InviteSchema = z.object({
   projectId: z.string().min(1),
@@ -172,6 +178,12 @@ export async function analyzeTranscript(formData: FormData) {
     )
     .join("\n");
 
+  // Pull the most recent KB entries so the AI has running project
+  // context (prior decisions, commitments, GitHub activity, manual
+  // notes) — each analysis gets smarter over time.
+  const recentKb = await getRecentKbEntries(projectId, 10);
+  const kbBlock = formatKbForPrompt(recentKb);
+
   const instructions = [
     "You are GPR, an AI referee for group projects. Your job is to read meeting transcripts and produce honest, structured Match Reports that hold members accountable based on what they actually did and said.",
     "",
@@ -187,10 +199,14 @@ export async function analyzeTranscript(formData: FormData) {
     "  * MVP: clearly carrying the team this session",
     "- A meeting can produce zero cards. That's fine. Don't force them.",
     "- summary: 1-3 sentences capturing the meeting's overall outcome and team health.",
+    "- key_knowledge: 3-5 durable facts from THIS meeting worth saving to the project knowledge base. Decisions, scope changes, owned commitments, blockers. Skip social chatter and anything already covered in 'PROJECT KNOWLEDGE' below — don't restate prior context.",
     "",
     "PROJECT:",
     `Name: ${project.name}`,
     `Brief: ${project.brief}`,
+    "",
+    "PROJECT KNOWLEDGE (recent, newest first — use as background, do not re-extract):",
+    kbBlock,
     "",
     "MEMBERS:",
     memberLines,
@@ -255,6 +271,28 @@ export async function analyzeTranscript(formData: FormData) {
     },
   });
 
+  // 6. Persist extracted facts as KB entries. Best-effort — a failure
+  // here shouldn't roll back the analysis the user just paid for.
+  if (analysis.key_knowledge.length > 0) {
+    try {
+      await addKnowledgeEntries(
+        analysis.key_knowledge.map((k, idx) => ({
+          projectId,
+          source: KB_SOURCES.TRANSCRIPT,
+          title: k.title,
+          content: k.content,
+          // Per-entry deterministic ref so repeat analyses on the same
+          // report don't double-insert.
+          sourceRefId: `${matchReport.id}:${idx}`,
+          sourceTypeLabel: "Match report",
+        })),
+      );
+    } catch (err) {
+      console.error("Failed to persist KB entries from transcript:", err);
+    }
+  }
+
   revalidatePath(`/projects/${projectId}`);
+  revalidatePath(`/projects/${projectId}/kb`);
   redirect(`/projects/${projectId}/reports/${matchReport.id}`);
 }
