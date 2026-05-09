@@ -59,7 +59,6 @@ export default async function ContractPage({
           }))}
           isOwner={isOwner}
           hasSigned={hasSigned}
-          currentUserId={user.id}
         />
       </main>
     </AppShell>

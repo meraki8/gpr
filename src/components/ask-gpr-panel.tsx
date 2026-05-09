@@ -78,20 +78,24 @@ export function AskGprPanel({
   // Lazy-init from localStorage so the very first render of useChat
   // already has the prior session's messages — avoids a flash of the
   // empty state on refresh.
-  const initialSessionRef = useRef<StoredSession | null>(null);
-  if (initialSessionRef.current === null) {
-    initialSessionRef.current = loadAskSession(projectId);
-  }
-  const sessionRef = useRef<StoredSession | null>(initialSessionRef.current);
+  const [initialSession] = useState<StoredSession | null>(() =>
+    loadAskSession(projectId),
+  );
+  const initialMessages = useMemo(
+    () =>
+      initialSession
+        ? hydrateMessages(initialSession.messages)
+        : undefined,
+    [initialSession],
+  );
+  const sessionRef = useRef<StoredSession | null>(initialSession);
 
   const { messages, sendMessage, setMessages, status, error } = useChat({
     id: `ask-${projectId}`,
     transport: new DefaultChatTransport({
       api: `/api/projects/${projectId}/ask`,
     }),
-    messages: initialSessionRef.current
-      ? hydrateMessages(initialSessionRef.current.messages)
-      : undefined,
+    messages: initialMessages,
   });
 
   // Persist messages to localStorage whenever they change. Skip the

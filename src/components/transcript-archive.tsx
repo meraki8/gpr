@@ -2,7 +2,7 @@
 
 import { ChevronLeft, ChevronRight, Search } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { FormatBadge } from "@/components/format-badge";
 
 type Transcript = {
@@ -48,6 +48,7 @@ export function TranscriptArchive({
   const [filter, setFilter] = useState<FilterKey>("all");
   const [sort, setSort] = useState<SortKey>("newest");
   const [page, setPage] = useState(1);
+  const [now] = useState(() => Date.now());
 
   // Normalize once.
   const normalized = useMemo(
@@ -68,7 +69,6 @@ export function TranscriptArchive({
 
   // Filter + search + sort.
   const view = useMemo(() => {
-    const now = Date.now();
     const week = 7 * 24 * 60 * 60 * 1000;
     const month = 30 * 24 * 60 * 60 * 1000;
     const q = search.trim().toLowerCase();
@@ -94,12 +94,7 @@ export function TranscriptArchive({
     });
 
     return filtered;
-  }, [normalized, filter, search, sort, viewerId]);
-
-  // Reset to page 1 whenever filter inputs change.
-  useEffect(() => {
-    setPage(1);
-  }, [filter, search, sort]);
+  }, [normalized, filter, search, sort, viewerId, now]);
 
   const totalPages = Math.max(1, Math.ceil(view.length / PAGE_SIZE));
   const safePage = Math.min(page, totalPages);
@@ -132,7 +127,10 @@ export function TranscriptArchive({
           type="text"
           placeholder="Search by title or uploader…"
           value={search}
-          onChange={(e) => setSearch(e.target.value)}
+          onChange={(e) => {
+            setSearch(e.target.value);
+            setPage(1);
+          }}
           className="field"
           style={{ paddingLeft: 36 }}
         />
@@ -153,7 +151,10 @@ export function TranscriptArchive({
             <button
               key={c.key}
               type="button"
-              onClick={() => setFilter(c.key)}
+              onClick={() => {
+                setFilter(c.key);
+                setPage(1);
+              }}
               className={
                 filter === c.key
                   ? "pill pill-sm"
@@ -168,7 +169,10 @@ export function TranscriptArchive({
         <div style={{ marginLeft: "auto" }}>
           <select
             value={sort}
-            onChange={(e) => setSort(e.target.value as SortKey)}
+            onChange={(e) => {
+              setSort(e.target.value as SortKey);
+              setPage(1);
+            }}
             className="field num"
             style={{
               padding: "6px 10px",
