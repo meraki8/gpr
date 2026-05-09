@@ -1,6 +1,5 @@
 import Link from "next/link";
 import { auth } from "@clerk/nextjs/server";
-import { SignInButton, SignUpButton } from "@clerk/nextjs";
 
 export default async function HomePage() {
   const { userId } = await auth();
@@ -23,16 +22,18 @@ export default async function HomePage() {
             </Link>
           ) : (
             <>
-              <SignInButton mode="modal">
-                <button className="text-white/80 hover:text-white">
-                  Sign in
-                </button>
-              </SignInButton>
-              <SignUpButton mode="modal">
-                <button className="bg-white text-black px-4 py-2 font-medium">
-                  Get started
-                </button>
-              </SignUpButton>
+              <Link
+                href="/sign-in"
+                className="text-white/80 hover:text-white"
+              >
+                Sign in
+              </Link>
+              <Link
+                href="/sign-up"
+                className="bg-white text-black px-4 py-2 font-medium"
+              >
+                Get started
+              </Link>
             </>
           )}
         </nav>
@@ -52,20 +53,12 @@ export default async function HomePage() {
             GPR watches your group projects, keeps receipts, and calls out who
             is delivering and who is not. No confrontation. Just evidence.
           </p>
-          {isSignedIn ? (
-            <Link
-              href="/dashboard"
-              className="inline-block bg-[#DC2626] text-white px-8 py-3 font-medium hover:bg-[#B91C1C] transition"
-            >
-              Go to dashboard
-            </Link>
-          ) : (
-            <SignUpButton mode="modal">
-              <button className="bg-[#DC2626] text-white px-8 py-3 font-medium hover:bg-[#B91C1C] transition">
-                Start a project
-              </button>
-            </SignUpButton>
-          )}
+          <Link
+            href={isSignedIn ? "/dashboard" : "/sign-up"}
+            className="inline-block bg-[#DC2626] text-white px-8 py-3 font-medium hover:bg-[#B91C1C] transition"
+          >
+            {isSignedIn ? "Go to dashboard" : "Start a project"}
+          </Link>
         </div>
       </section>
 
