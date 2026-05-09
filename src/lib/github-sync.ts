@@ -446,15 +446,21 @@ export async function syncGithubProject(
           const body = c.commit.message.includes("\n")
             ? c.commit.message.split("\n").slice(1).join("\n").trim()
             : "";
-          const author = c.author?.login ?? "unknown";
+          // Prefer the GitHub-resolved login (renders as @handle).
+          // Fall back to the raw git author name so the KB row still
+          // has an owner when GitHub couldn't link the commit's email.
+          const assignedTo =
+            c.author?.login ?? c.commit.author?.name ?? null;
+          const authorLabel = c.author?.login ?? "unknown";
           return {
             projectId,
             source: KB_SOURCES.GITHUB,
             sourceRefId: `commit:${repo}:${c.sha}`,
             sourceTypeLabel: "Commit",
             title: subject,
+            assignedTo,
             content: [
-              `${repo} · ${c.sha.slice(0, 7)} · @${author}`,
+              `${repo} · ${c.sha.slice(0, 7)} · @${authorLabel}`,
               body,
               c.html_url,
             ]
@@ -544,6 +550,7 @@ export async function syncGithubProject(
             sourceRefId: `pr:${repo}:${pr.number}`,
             sourceTypeLabel: `PR ${state}`,
             title: `#${pr.number} ${pr.title}`,
+            assignedTo: pr.user?.login ?? null,
             content: [`${repo} · @${author} · ${state}`, pr.html_url].join(
               "\n",
             ),

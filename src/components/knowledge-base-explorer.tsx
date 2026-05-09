@@ -23,6 +23,29 @@ type Entry = {
   targetDate: Date | string | null;
 };
 
+// Pulls the @login token out of a GitHub-derived KB entry's content
+// so historical rows (synced before assignedTo was populated at
+// write time) still render an owner. The content shape is
+// "<repo> · <sha7> · @<login>\n…" for commits and
+// "<repo> · @<login> · <state>\n…" for PRs — match the first
+// @-handle (alphanumeric + dash, GitHub's allowed charset) and
+// ignore "@unknown" so we don't surface that as an owner.
+function extractGithubAuthor(content: string): string | null {
+  const m = content.match(/@([A-Za-z0-9][A-Za-z0-9-]*)/);
+  if (!m) return null;
+  const handle = m[1];
+  if (handle.toLowerCase() === "unknown") return null;
+  return handle;
+}
+
+function displayAssignee(entry: { source: string; assignedTo: string | null; content: string }): string | null {
+  if (entry.assignedTo) return entry.assignedTo;
+  if (entry.source === KB_SOURCES.GITHUB) {
+    return extractGithubAuthor(entry.content);
+  }
+  return null;
+}
+
 type NormalizedEntry = Omit<Entry, "createdAt" | "targetDate"> & {
   createdAt: Date;
   targetDate: Date | null;
@@ -791,18 +814,23 @@ function EntryAccordion({
         >
           {entry.title}
         </span>
-        <span
-          style={{
-            fontSize: 13,
-            color: entry.assignedTo ? "var(--ink-2)" : "var(--mute-2)",
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-          }}
-          title={entry.assignedTo ?? "Unassigned"}
-        >
-          {entry.assignedTo ?? "—"}
-        </span>
+        {(() => {
+          const assignee = displayAssignee(entry);
+          return (
+            <span
+              style={{
+                fontSize: 13,
+                color: assignee ? "var(--ink-2)" : "var(--mute-2)",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+              title={assignee ?? "Unassigned"}
+            >
+              {assignee ?? "—"}
+            </span>
+          );
+        })()}
         <span
           className="num"
           style={{
@@ -854,7 +882,7 @@ function EntryAccordion({
             >
               {entry.content}
             </div>
-            {(entry.assignedTo || entry.targetDate) && (
+            {(displayAssignee(entry) || entry.targetDate) && (
               <div
                 className="mute-ink"
                 style={{
@@ -865,14 +893,17 @@ function EntryAccordion({
                   flexWrap: "wrap",
                 }}
               >
-                {entry.assignedTo && (
-                  <span>
-                    <strong style={{ color: "var(--ink)" }}>
-                      Owner:
-                    </strong>{" "}
-                    {entry.assignedTo}
-                  </span>
-                )}
+                {(() => {
+                  const assignee = displayAssignee(entry);
+                  return assignee ? (
+                    <span>
+                      <strong style={{ color: "var(--ink)" }}>
+                        Owner:
+                      </strong>{" "}
+                      {assignee}
+                    </span>
+                  ) : null;
+                })()}
                 {entry.targetDate && (
                   <span>
                     <strong style={{ color: "var(--ink)" }}>
