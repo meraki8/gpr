@@ -1,6 +1,7 @@
 import { ChevronDown } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { CapabilityPanel } from "@/components/capability-panel";
+import { NudgeButton } from "@/components/nudge-button";
 import { PageHead } from "@/components/page-head";
 import { Score } from "@/components/score";
 import { ResendInviteButton } from "@/components/resend-invite-button";
@@ -56,8 +57,9 @@ export default async function MembersPage({
               <div
                 style={{
                   display: "grid",
-                  gridTemplateColumns: "60px 1fr 100px 110px 28px",
-                  gap: 32,
+                  gridTemplateColumns:
+                    "60px 1fr 100px 110px 110px 28px",
+                  gap: 24,
                   padding: "26px 0",
                   alignItems: "center",
                   cursor: canExpand ? "pointer" : "default",
@@ -123,6 +125,17 @@ export default async function MembersPage({
                     month: "short",
                     day: "numeric",
                   })}
+                </div>
+                <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                  {!isViewer && (
+                    <NudgeButton
+                      projectId={project.id}
+                      recipientUserId={m.userId}
+                      recipientName={m.user.name ?? m.user.email}
+                      recipientScore={m.contributionScore}
+                      size="sm"
+                    />
+                  )}
                 </div>
                 <div
                   className="mute-ink"

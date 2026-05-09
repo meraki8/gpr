@@ -36,6 +36,58 @@ export async function sendInviteEmail({
   return data;
 }
 
+export async function sendNudgeEmail({
+  to,
+  fromName,
+  projectName,
+  message,
+}: {
+  to: string;
+  fromName: string;
+  projectName: string;
+  message: string;
+}) {
+  const { data, error } = await resend.emails.send({
+    from: FROM,
+    to: [to],
+    subject: `GPR Nudge — ${projectName}`,
+    html: renderNudgeHtml({ fromName, projectName, message }),
+  });
+
+  if (error) {
+    console.error("[email] Resend nudge error:", error);
+    throw new Error("Failed to send nudge email");
+  }
+  return data;
+}
+
+function renderNudgeHtml({
+  fromName,
+  projectName,
+  message,
+}: {
+  fromName: string;
+  projectName: string;
+  message: string;
+}) {
+  return `<!DOCTYPE html>
+<html><body style="margin:0;padding:0;background:#fafafa;">
+  <div style="font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif;max-width:560px;margin:0 auto;padding:32px 24px;color:#111;">
+    <div style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;letter-spacing:0.3em;color:#DC2626;text-transform:uppercase;margin-bottom:24px;">
+      GPR — Nudge
+    </div>
+    <h1 style="font-size:24px;margin:0 0 8px;line-height:1.2;">A teammate is calling you up.</h1>
+    <p style="font-size:14px;line-height:1.5;margin:0 0 24px;color:#666;">
+      <strong>${escapeHtml(fromName)}</strong> sent you a nudge from <strong>${escapeHtml(projectName)}</strong>.
+    </p>
+    <div style="background:#fff;border:1px solid #eee;border-left:3px solid #DC2626;padding:16px 20px;margin:0 0 24px;font-size:15px;line-height:1.55;white-space:pre-line;color:#222;">${escapeHtml(message)}</div>
+    <p style="font-size:13px;color:#777;margin:32px 0 0;line-height:1.5;">
+      The ref keeps receipts. Hop into GPR and show some life.
+    </p>
+  </div>
+</body></html>`;
+}
+
 function renderInviteHtml({
   inviterName,
   projectName,

@@ -35,6 +35,54 @@ export async function POST(
     });
   }
 
+  // Viewer context: rank within the project, cards received, and the
+  // count of meetings they appear in. Used to seed the "YOU ARE TALKING
+  // TO" header so the model can answer "what's my score / rank / cards"
+  // without claiming ignorance.
+  const [memberRows, viewerCards, viewerMeetingCount] = await Promise.all([
+    db.projectMember.findMany({
+      where: { projectId },
+      orderBy: [{ contributionScore: "desc" }, { joinedAt: "asc" }],
+      select: { userId: true },
+    }),
+    db.card.findMany({
+      where: { projectId, userId: user.id },
+      orderBy: { createdAt: "desc" },
+      select: { cardType: true, reason: true, createdAt: true },
+    }),
+    db.memberReport.count({
+      where: { userId: user.id, matchReport: { projectId } },
+    }),
+  ]);
+
+  const totalMembers = memberRows.length;
+  const viewerRank =
+    memberRows.findIndex((m) => m.userId === user.id) + 1 || totalMembers;
+
+  const cardsLine =
+    viewerCards.length === 0
+      ? "(none)"
+      : viewerCards
+          .map(
+            (c) =>
+              `${c.cardType} on ${c.createdAt.toISOString().slice(0, 10)} — ${c.reason}`,
+          )
+          .join("; ");
+
+  const viewerBlock = [
+    "YOU ARE TALKING TO:",
+    `Name: ${user.name ?? "(unknown)"}`,
+    `Email: ${user.email}`,
+    `Role: ${member.role.toLowerCase()}`,
+    `Contribution Score: ${member.contributionScore}`,
+    `Rank: #${viewerRank} out of ${totalMembers} members`,
+    `Cards received: ${cardsLine}`,
+    `Meetings participated in: ${viewerMeetingCount}`,
+    "",
+    "When the user says 'me', 'my', 'I', or 'mine' always refer to this person specifically.",
+    "Never say you do not have information about the current user — their data is above.",
+  ].join("\n");
+
   const { messages } = (await req.json()) as { messages: UIMessage[] };
 
   // Pull all KB entries — keep the order stable (newest-first) so the
@@ -82,8 +130,10 @@ export async function POST(
           .join("\n\n");
 
   const system = [
+    viewerBlock,
+    "",
     `You are the GPR project assistant for "${member.project.name}".`,
-    `You only answer questions about THIS project, based ONLY on the project brief and knowledge base provided below.`,
+    `You only answer questions about THIS project, based ONLY on the project brief and knowledge base provided below — except for questions about the current user, where the YOU ARE TALKING TO block above is authoritative.`,
     `If the answer is not in the project knowledge base, respond with exactly: "I do not have that information in this project yet."`,
     `When you draw on a knowledge base entry, cite it inline using its tag in square brackets — e.g. [KB-3] or [KB-7]. Cite multiple if they apply.`,
     `Be concise. Don't speculate. Don't fabricate names, dates, or commitments. If a question is ambiguous, ask for clarification.`,
