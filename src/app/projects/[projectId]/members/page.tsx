@@ -27,6 +27,7 @@ export default async function MembersPage({
     (m) => m.userId === user.id,
   );
   const viewerIsOwner = viewerMembership?.role === "OWNER";
+  const renderTimeMs = new Date().getTime();
 
   return (
     <AppShell
@@ -215,7 +216,7 @@ export default async function MembersPage({
                 const daysLeft = Math.max(
                   0,
                   Math.ceil(
-                    (inv.expiresAt.getTime() - Date.now()) /
+                    (inv.expiresAt.getTime() - renderTimeMs) /
                       (1000 * 60 * 60 * 24),
                   ),
                 );

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import { syncGithubProject } from "@/lib/github-sync";
 import { syncJiraProject } from "@/lib/jira-sync";
 
 // Hit by GitHub Actions (or any cron) every N minutes. Loops over
@@ -39,6 +40,10 @@ async function run(req: NextRequest) {
     where: { sourceType: "JIRA", enabled: true },
     select: { projectId: true },
   });
+  const githubSources = await db.contributionSource.findMany({
+    where: { sourceType: "GITHUB", enabled: true },
+    select: { projectId: true },
+  });
 
   const summaries = [];
   for (const s of sources) {
@@ -54,10 +59,25 @@ async function run(req: NextRequest) {
     }
   }
 
+  const githubSummaries = [];
+  for (const s of githubSources) {
+    try {
+      const summary = await syncGithubProject(s.projectId);
+      githubSummaries.push(summary);
+    } catch (err) {
+      githubSummaries.push({
+        projectId: s.projectId,
+        errors: [err instanceof Error ? err.message : "unknown error"],
+      });
+    }
+  }
+
   return NextResponse.json({
     ok: true,
-    projects: summaries.length,
+    jiraProjects: summaries.length,
+    githubProjects: githubSummaries.length,
     summaries,
+    githubSummaries,
     ranAt: new Date().toISOString(),
   });
 }

@@ -49,6 +49,17 @@ const SIDEBAR_RED = "#ff3b30";
 const COLLAPSED_W = 56;
 const EXPANDED_W = 220;
 
+function initialTheme(): Theme {
+  if (typeof window === "undefined") return "dark";
+  const t = window.localStorage.getItem(STORAGE_THEME);
+  return t === "light" || t === "dark" ? t : "dark";
+}
+
+function initialCollapsed(): boolean {
+  if (typeof window === "undefined") return false;
+  return window.localStorage.getItem(STORAGE_COLLAPSED) === "1";
+}
+
 export type AppShellProps = {
   user: { name: string | null; email: string };
   allGroups: SidebarGroup[];
@@ -67,18 +78,12 @@ export function AppShell({
   children,
 }: AppShellProps) {
   const pathname = usePathname();
-  const [theme, setTheme] = useState<Theme>("dark");
-  const [collapsed, setCollapsed] = useState(false);
+  const [theme, setTheme] = useState<Theme>(initialTheme);
+  const [collapsed, setCollapsed] = useState(initialCollapsed);
 
   // Hydrate persisted preferences. Brief flash possible on first load
   // for users who chose light — acceptable; can be solved later with
   // an inline pre-hydration script if needed.
-  useEffect(() => {
-    const t = localStorage.getItem(STORAGE_THEME);
-    if (t === "light" || t === "dark") setTheme(t);
-    if (localStorage.getItem(STORAGE_COLLAPSED) === "1") setCollapsed(true);
-  }, []);
-
   const toggleTheme = () => {
     const next: Theme = theme === "dark" ? "light" : "dark";
     setTheme(next);

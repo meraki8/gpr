@@ -46,9 +46,12 @@ export function NotificationsBell() {
   // Initial fetch + low-effort fallback poll. No websockets — the
   // user said simple is fine.
   useEffect(() => {
-    fetchData();
-    const id = window.setInterval(fetchData, POLL_FALLBACK_MS);
-    return () => window.clearInterval(id);
+    const initialId = window.setTimeout(fetchData, 0);
+    const pollId = window.setInterval(fetchData, POLL_FALLBACK_MS);
+    return () => {
+      window.clearTimeout(initialId);
+      window.clearInterval(pollId);
+    };
   }, [fetchData]);
 
   // Outside click + Esc to close.

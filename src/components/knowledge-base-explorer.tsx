@@ -23,6 +23,29 @@ type Entry = {
   targetDate: Date | string | null;
 };
 
+// Pulls the @login token out of a GitHub-derived KB entry's content
+// so historical rows (synced before assignedTo was populated at
+// write time) still render an owner. The content shape is
+// "<repo> · <sha7> · @<login>\n…" for commits and
+// "<repo> · @<login> · <state>\n…" for PRs — match the first
+// @-handle (alphanumeric + dash, GitHub's allowed charset) and
+// ignore "@unknown" so we don't surface that as an owner.
+function extractGithubAuthor(content: string): string | null {
+  const m = content.match(/@([A-Za-z0-9][A-Za-z0-9-]*)/);
+  if (!m) return null;
+  const handle = m[1];
+  if (handle.toLowerCase() === "unknown") return null;
+  return handle;
+}
+
+function displayAssignee(entry: { source: string; assignedTo: string | null; content: string }): string | null {
+  if (entry.assignedTo) return entry.assignedTo;
+  if (entry.source === KB_SOURCES.GITHUB) {
+    return extractGithubAuthor(entry.content);
+  }
+  return null;
+}
+
 type NormalizedEntry = Omit<Entry, "createdAt" | "targetDate"> & {
   createdAt: Date;
   targetDate: Date | null;
@@ -154,10 +177,17 @@ export function KnowledgeBaseExplorer({
 
   // Local search state — debounced into the URL so the user can type
   // without every keystroke causing a server round-trip.
-  const [searchInput, setSearchInput] = useState(activeFilters.q);
-  useEffect(() => {
-    setSearchInput(activeFilters.q);
-  }, [activeFilters.q]);
+  const [searchDraft, setSearchDraft] = useState({
+    source: activeFilters.q,
+    value: activeFilters.q,
+  });
+  const searchInput =
+    searchDraft.source === activeFilters.q
+      ? searchDraft.value
+      : activeFilters.q;
+  const setSearchInput = (value: string) => {
+    setSearchDraft({ source: activeFilters.q, value });
+  };
 
   const debounceRef = useRef<number | null>(null);
   useEffect(() => {
@@ -174,14 +204,35 @@ export function KnowledgeBaseExplorer({
 
   // Custom range scratch state — only writes to the URL when the
   // user hits Apply.
-  const [customFrom, setCustomFrom] = useState(
-    activeFilters.customFrom ?? "",
-  );
-  const [customTo, setCustomTo] = useState(activeFilters.customTo ?? "");
-  useEffect(() => {
-    setCustomFrom(activeFilters.customFrom ?? "");
-    setCustomTo(activeFilters.customTo ?? "");
-  }, [activeFilters.customFrom, activeFilters.customTo]);
+  const activeCustomFrom = activeFilters.customFrom ?? "";
+  const activeCustomTo = activeFilters.customTo ?? "";
+  const [customDraft, setCustomDraft] = useState({
+    sourceFrom: activeCustomFrom,
+    sourceTo: activeCustomTo,
+    from: activeCustomFrom,
+    to: activeCustomTo,
+  });
+  const customDraftMatches =
+    customDraft.sourceFrom === activeCustomFrom &&
+    customDraft.sourceTo === activeCustomTo;
+  const customFrom = customDraftMatches ? customDraft.from : activeCustomFrom;
+  const customTo = customDraftMatches ? customDraft.to : activeCustomTo;
+  const setCustomFrom = (from: string) => {
+    setCustomDraft({
+      sourceFrom: activeCustomFrom,
+      sourceTo: activeCustomTo,
+      from,
+      to: customTo,
+    });
+  };
+  const setCustomTo = (to: string) => {
+    setCustomDraft({
+      sourceFrom: activeCustomFrom,
+      sourceTo: activeCustomTo,
+      from: customFrom,
+      to,
+    });
+  };
 
   const now = useMemo(() => new Date(), []);
 
@@ -470,10 +521,14 @@ function Pagination({
   pageSize: number;
   onPage: (n: number) => void;
 }) {
-  const [jumpInput, setJumpInput] = useState(String(page));
-  useEffect(() => {
-    setJumpInput(String(page));
-  }, [page]);
+  const [jumpDraft, setJumpDraft] = useState({
+    page,
+    value: String(page),
+  });
+  const jumpInput = jumpDraft.page === page ? jumpDraft.value : String(page);
+  const setJumpInput = (value: string) => {
+    setJumpDraft({ page, value });
+  };
 
   const start = (page - 1) * pageSize + 1;
   const end = Math.min(page * pageSize, totalCount);
@@ -759,18 +814,23 @@ function EntryAccordion({
         >
           {entry.title}
         </span>
-        <span
-          style={{
-            fontSize: 13,
-            color: entry.assignedTo ? "var(--ink-2)" : "var(--mute-2)",
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-          }}
-          title={entry.assignedTo ?? "Unassigned"}
-        >
-          {entry.assignedTo ?? "—"}
-        </span>
+        {(() => {
+          const assignee = displayAssignee(entry);
+          return (
+            <span
+              style={{
+                fontSize: 13,
+                color: assignee ? "var(--ink-2)" : "var(--mute-2)",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+              title={assignee ?? "Unassigned"}
+            >
+              {assignee ?? "—"}
+            </span>
+          );
+        })()}
         <span
           className="num"
           style={{
@@ -822,7 +882,7 @@ function EntryAccordion({
             >
               {entry.content}
             </div>
-            {(entry.assignedTo || entry.targetDate) && (
+            {(displayAssignee(entry) || entry.targetDate) && (
               <div
                 className="mute-ink"
                 style={{
@@ -833,14 +893,17 @@ function EntryAccordion({
                   flexWrap: "wrap",
                 }}
               >
-                {entry.assignedTo && (
-                  <span>
-                    <strong style={{ color: "var(--ink)" }}>
-                      Owner:
-                    </strong>{" "}
-                    {entry.assignedTo}
-                  </span>
-                )}
+                {(() => {
+                  const assignee = displayAssignee(entry);
+                  return assignee ? (
+                    <span>
+                      <strong style={{ color: "var(--ink)" }}>
+                        Owner:
+                      </strong>{" "}
+                      {assignee}
+                    </span>
+                  ) : null;
+                })()}
                 {entry.targetDate && (
                   <span>
                     <strong style={{ color: "var(--ink)" }}>

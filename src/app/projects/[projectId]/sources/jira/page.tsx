@@ -85,7 +85,7 @@ export default async function JiraPage({
     getNavContext({ projectId }),
     getProjectSources(projectId, page, "JIRA"),
   ]);
-  const { project, isOwner, hasNextPage } = sources;
+  const { project, contributionEvents, isOwner, hasNextPage } = sources;
 
   const jiraSource = project.contributionSources.find(
     (s) => s.sourceType === "JIRA",
@@ -421,7 +421,7 @@ export default async function JiraPage({
               </span>
             )}
           </div>
-          {project.contributionEvents.length === 0 ? (
+          {contributionEvents.length === 0 ? (
             <p className="body mute-ink" style={{ margin: 0 }}>
               {page > 1
                 ? "No more events."
@@ -430,7 +430,7 @@ export default async function JiraPage({
                   : "No Jira events yet. Connect Jira above to start syncing."}
             </p>
           ) : (
-            project.contributionEvents.map((e, i) => {
+            contributionEvents.map((e, i) => {
               const payload = e.payloadJson as {
                 title?: string;
                 issueKey?: string;
