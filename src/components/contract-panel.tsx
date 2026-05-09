@@ -81,9 +81,13 @@ export function ContractPanel({
     setSignError(null);
     startTransition(async () => {
       try {
-        await signContract(projectId, typedName);
-        setSigned(true);
-        setTypedName("");
+        const result = await signContract(projectId, typedName);
+        if (result?.error) {
+          setSignError(result.error);
+        } else {
+          setSigned(true);
+          setTypedName("");
+        }
       } catch (e) {
         setSignError(e instanceof Error ? e.message : "Failed to sign contract");
       }
