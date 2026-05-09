@@ -2,7 +2,7 @@ import { notFound } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
 import { PageHead } from "@/components/page-head";
 import { requireDbUser } from "@/lib/auth";
-import { getMyGroups, getProjectSources } from "@/lib/data";
+import { getNavContext, getProjectSources } from "@/lib/data";
 import { getBaseUrl } from "@/lib/url";
 import {
   addGithubRepo,
@@ -20,9 +20,9 @@ export default async function SourcesPage({
   params: Promise<{ projectId: string }>;
 }) {
   const { projectId } = await params;
-  const [user, allGroups, sources] = await Promise.all([
+  const [user, nav, sources] = await Promise.all([
     requireDbUser(),
-    getMyGroups(),
+    getNavContext({ projectId }),
     getProjectSources(projectId),
   ]);
   const { project, isOwner } = sources;
@@ -50,12 +50,10 @@ export default async function SourcesPage({
   return (
     <AppShell
       user={user}
-      groups={allGroups}
-      currentProject={{
-        id: project.id,
-        name: project.name,
-        group: { id: project.group.id, name: project.group.name },
-      }}
+      allGroups={nav.allGroups}
+      activeGroup={nav.activeGroup}
+      groupProjects={nav.groupProjects}
+      currentProject={{ id: project.id, name: project.name }}
     >
       <main className="wrap-w" style={{ paddingBottom: 160 }}>
         <PageHead

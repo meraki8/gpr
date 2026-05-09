@@ -48,12 +48,40 @@ export const CardDraft = z.object({
     .describe("Verbatim quotes from the transcript that support the card"),
 });
 
+export const KnowledgeFact = z.object({
+  title: z
+    .string()
+    .describe("Short noun-phrase headline (under 80 chars)"),
+  content: z
+    .string()
+    .describe(
+      "1-3 sentence statement of the decision, commitment, or context. Self-contained — readable without the transcript.",
+    ),
+  assigned_to: z
+    .string()
+    .nullable()
+    .describe(
+      "Name of the person responsible for this item if the transcript clearly assigns it. Use the speaker's name as it appears. Null if no clear owner.",
+    ),
+  target_date_iso: z
+    .string()
+    .nullable()
+    .describe(
+      "ISO date (YYYY-MM-DD) of the deadline if mentioned (e.g. 'by Friday', 'next Tuesday', 'EOD Wednesday'). Resolve relative dates against the meeting timestamp provided in the prompt. Null if no date is mentioned.",
+    ),
+});
+
 export const MatchAnalysis = z.object({
   summary: z
     .string()
     .describe("1-3 sentence overall assessment of the meeting"),
   members: z.array(MemberAnalysis),
   cards: z.array(CardDraft),
+  key_knowledge: z
+    .array(KnowledgeFact)
+    .describe(
+      "3-5 durable facts from this meeting worth remembering for future analyses: decisions made, commitments owned, scope changes, blockers. Skip pleasantries and idle chatter.",
+    ),
 });
 
 export type MatchAnalysisType = z.infer<typeof MatchAnalysis>;

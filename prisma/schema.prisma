@@ -7,6 +7,64 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// =================== ENUMS ===================
+
+enum GroupRole {
+  OWNER
+  MEMBER
+}
+
+enum ProjectRole {
+  OWNER
+  MEMBER
+}
+
+enum TranscriptSource {
+  PASTE
+  FILE
+}
+
+enum MatchReportStatus {
+  DRAFT
+  PUBLISHED
+}
+
+enum TaskStatus {
+  TODO
+  IN_PROGRESS
+  DONE
+  BLOCKED
+  CANCELLED
+}
+
+enum TaskSource {
+  MANUAL
+  TRANSCRIPT
+  GITHUB
+  JIRA
+}
+
+enum CardType {
+  YELLOW
+  RED
+  MVP
+}
+
+enum CardStatus {
+  DRAFT
+  APPROVED
+  DISMISSED
+}
+
+enum ContributionSourceType {
+  GITHUB
+  TRANSCRIPT
+  MANUAL
+  JIRA
+}
+
+// =================== USERS, GROUPS, PROJECTS ===================
+
 model User {
   id                  String          @id @default(cuid())
   clerkUserId         String          @unique
@@ -83,6 +141,14 @@ model Project {
   sourceIdentities    SourceIdentity[]
   tasks               Task[]
   transcripts         Transcript[]
+  matchReports        MatchReport[]
+  tasks               Task[]
+  cards               Card[]
+  contributionSources ContributionSource[]
+  contributionEvents  ContributionEvent[]
+  sourceIdentities    SourceIdentity[]
+  notifications       Notification[]
+  knowledgeEntries    KnowledgeEntry[]
 
   @@index([groupId])
   @@index([deletedAt])
@@ -100,9 +166,37 @@ model ProjectMember {
   user              User             @relation(fields: [userId], references: [id], onDelete: Cascade)
   scoreSnapshots    ScoreSnapshot[]
   sourceIdentities  SourceIdentity[]
+  role              ProjectRole @default(MEMBER)
+  contributionScore Int         @default(0)
+  joinedAt          DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+
+  project          Project            @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user             User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sourceIdentities SourceIdentity[]
+  scoreSnapshots   ScoreSnapshot[]
+  capabilities     MemberCapability[]
 
   @@unique([projectId, userId])
   @@index([userId])
+}
+
+// Per-member capability toggles. `capability` is a free-form string
+// so adding new permissions doesn't require a migration. Absence of
+// a row means "default" (enabled for member-toggleable capabilities,
+// owners always get everything regardless of stored values).
+model MemberCapability {
+  id              String   @id @default(cuid())
+  projectMemberId String
+  capability      String
+  enabled         Boolean  @default(true)
+  updatedAt       DateTime @updatedAt
+  createdAt       DateTime @default(now())
+
+  projectMember ProjectMember @relation(fields: [projectMemberId], references: [id], onDelete: Cascade)
+
+  @@unique([projectMemberId, capability])
+  @@index([projectMemberId])
 }
 
 model ProjectInvite {
@@ -147,6 +241,22 @@ model Transcript {
   matchReports MatchReport[]
   project      Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
   uploader     User             @relation("TranscriptUploader", fields: [uploadedBy], references: [id])
+  id         String           @id @default(cuid())
+  projectId  String
+  uploadedBy String
+  // Optional human-set title and the actual time the meeting occurred
+  // (vs createdAt = upload time). Both nullable so legacy rows keep
+  // working — the page falls back to a date-based label.
+  title      String?
+  meetingAt  DateTime?
+  rawText    String           @db.Text
+  blobUrl    String?
+  source     TranscriptSource
+  createdAt  DateTime         @default(now())
+
+  project      Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  uploader     User          @relation("TranscriptUploader", fields: [uploadedBy], references: [id])
+  matchReports MatchReport[]
 
   @@index([projectId])
 }
@@ -302,6 +412,39 @@ model ScoreSnapshot {
   @@index([projectMemberId])
   @@index([computedAt])
 }
+
+// =================== KNOWLEDGE BASE ===================
+
+// KB grows automatically from transcripts, GitHub, Jira (future), and
+// manual entries. `source` is intentionally a free-form string so new
+// providers can be added without a schema migration — values in use
+// today: "transcript", "github", "jira", "manual".
+model KnowledgeEntry {
+  id              String    @id @default(cuid())
+  projectId       String
+  source          String
+  sourceRefId     String?
+  sourceTypeLabel String?
+  title           String
+  content         String    @db.Text
+  // Accountability context extracted from transcripts. Both nullable
+  // because not every entry has an owner or due date — GitHub commits
+  // and free-form notes typically won't.
+  assignedTo      String?
+  targetDate      DateTime?
+  createdAt       DateTime  @default(now())
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  // Idempotency for sync sources: one entry per (project, source,
+  // external ref). Manual entries pass null sourceRefId, which is not
+  // constrained by this index in Postgres.
+  @@unique([projectId, source, sourceRefId])
+  @@index([projectId, createdAt])
+  @@index([projectId, source])
+}
+
+// =================== NOTIFICATIONS (stub) ===================
 
 model Notification {
   id        String    @id @default(cuid())

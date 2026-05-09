@@ -21,5 +21,8 @@ CREATE INDEX "KnowledgeEntry_projectId_createdAt_idx" ON "KnowledgeEntry"("proje
 -- CreateIndex
 CREATE INDEX "KnowledgeEntry_projectId_source_idx" ON "KnowledgeEntry"("projectId", "source");
 
+-- CreateIndex
+CREATE UNIQUE INDEX "KnowledgeEntry_projectId_source_sourceRefId_key" ON "KnowledgeEntry"("projectId", "source", "sourceRefId");
+
 -- AddForeignKey
 ALTER TABLE "KnowledgeEntry" ADD CONSTRAINT "KnowledgeEntry_projectId_fkey" FOREIGN KEY ("projectId") REFERENCES "Project"("id") ON DELETE CASCADE ON UPDATE CASCADE;

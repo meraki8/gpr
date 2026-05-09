@@ -5,7 +5,7 @@ import { Score } from "@/components/score";
 import { RefCard, cardKindFromCardType } from "@/components/ref-card";
 import { ResendInviteButton } from "@/components/resend-invite-button";
 import { requireDbUser } from "@/lib/auth";
-import { getMyGroups, getProject } from "@/lib/data";
+import { getNavContext, getProject } from "@/lib/data";
 import { analyzeTranscript, inviteMember } from "./actions";
 
 export default async function ProjectPage({
@@ -14,9 +14,9 @@ export default async function ProjectPage({
   params: Promise<{ projectId: string }>;
 }) {
   const { projectId } = await params;
-  const [user, allGroups, project] = await Promise.all([
+  const [user, nav, project] = await Promise.all([
     requireDbUser(),
-    getMyGroups(),
+    getNavContext({ projectId }),
     getProject(projectId),
   ]);
   const isOwner = project.members.some(
@@ -37,12 +37,10 @@ export default async function ProjectPage({
   return (
     <AppShell
       user={user}
-      groups={allGroups}
-      currentProject={{
-        id: project.id,
-        name: project.name,
-        group: { id: project.group.id, name: project.group.name },
-      }}
+      allGroups={nav.allGroups}
+      activeGroup={nav.activeGroup}
+      groupProjects={nav.groupProjects}
+      currentProject={{ id: project.id, name: project.name }}
     >
       <main className="wrap-w" style={{ paddingBottom: 160 }}>
         <PageHead
