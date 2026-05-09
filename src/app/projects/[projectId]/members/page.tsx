@@ -7,7 +7,7 @@ import { Score } from "@/components/score";
 import { ResendInviteButton } from "@/components/resend-invite-button";
 import { requireDbUser } from "@/lib/auth";
 import { getNavContext, getProjectMembers } from "@/lib/data";
-import { inviteMember } from "../actions";
+import { cancelInvite, inviteMember } from "../actions";
 
 export default async function MembersPage({
   params,
@@ -251,7 +251,19 @@ export default async function MembersPage({
                       {daysLeft} day{daysLeft === 1 ? "" : "s"} left
                     </span>
                     {viewerIsOwner && (
-                      <ResendInviteButton inviteId={inv.id} />
+                      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                        <ResendInviteButton inviteId={inv.id} />
+                        <form action={cancelInvite}>
+                          <input type="hidden" name="inviteId" value={inv.id} />
+                          <button
+                            type="submit"
+                            className="lk-mute"
+                            style={{ fontSize: 12 }}
+                          >
+                            Cancel
+                          </button>
+                        </form>
+                      </div>
                     )}
                   </li>
                 );

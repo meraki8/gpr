@@ -87,6 +87,39 @@ export async function inviteMember(formData: FormData) {
   revalidatePath(`/projects/${projectId}`);
 }
 
+const CancelInviteSchema = z.object({
+  inviteId: z.string().min(1),
+});
+
+export async function cancelInvite(formData: FormData) {
+  const user = await requireDbUser();
+
+  const parsed = CancelInviteSchema.safeParse({
+    inviteId: formData.get("inviteId"),
+  });
+  if (!parsed.success) throw new Error("Invalid input");
+
+  const invite = await db.projectInvite.findFirst({
+    where: {
+      id: parsed.data.inviteId,
+      acceptedAt: null,
+      project: {
+        deletedAt: null,
+        members: { some: { userId: user.id, role: "OWNER" } },
+      },
+    },
+  });
+  if (!invite) throw new Error("FORBIDDEN");
+
+  // Set expiresAt to now so the token is immediately dead.
+  await db.projectInvite.update({
+    where: { id: invite.id },
+    data: { expiresAt: new Date() },
+  });
+
+  revalidatePath(`/projects/${invite.projectId}/members`);
+}
+
 const ResendInviteSchema = z.object({
   inviteId: z.string().min(1),
 });
