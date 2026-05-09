@@ -2,10 +2,16 @@ import { openai } from "@ai-sdk/openai";
 import { convertToModelMessages, streamText, type UIMessage } from "ai";
 import { requireDbUser } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { AI_MODEL } from "@/lib/ai";
 
 // Allow long streams — KB-grounded answers can run a few seconds.
 export const maxDuration = 60;
+
+// Hardcoded for chat: the rest of the app uses gpt-5.4-mini via the
+// OpenAI Responses API, which the AI SDK's `openai()` chat-completions
+// provider does not appear to resolve cleanly. gpt-4o-mini is a
+// well-known, broadly-available chat model that this provider handles
+// without surprises. If chat ever feels too weak we can lift this.
+const CHAT_MODEL = "gpt-4o-mini";
 
 export async function POST(
   req: Request,
@@ -89,12 +95,10 @@ export async function POST(
     kbBlock,
   ].join("\n");
 
-  // Debug — visible in Vercel logs. The user reported the assistant
-  // claiming "I do not have that information" while the page showed
-  // 14 entries; these logs confirm the prompt that actually went to
-  // the model on each request.
+  // Debug — visible in Vercel logs.
   console.log("[ask] projectId:", projectId);
   console.log("[ask] kb entries fetched:", kbEntries.length);
+  console.log("[ask] model:", CHAT_MODEL);
   console.log(
     "[ask] system prompt (first 200 chars):",
     system.slice(0, 200),
@@ -106,13 +110,28 @@ export async function POST(
   );
 
   const result = streamText({
-    model: openai(AI_MODEL),
+    model: openai(CHAT_MODEL),
     system,
     messages: await convertToModelMessages(messages),
     onError: (err) => {
       console.error("[ask] streamText error:", err);
     },
+    onFinish: ({ text, finishReason, usage }) => {
+      console.log(
+        "[ask] model finish — reason:",
+        finishReason,
+        "tokens:",
+        usage,
+        "text length:",
+        text?.length ?? 0,
+      );
+      if (text) {
+        console.log("[ask] response (first 200 chars):", text.slice(0, 200));
+      }
+    },
   });
+
+  console.log("[ask] model response started");
 
   return result.toUIMessageStreamResponse();
 }
