@@ -271,6 +271,153 @@ export default async function SourcesPage({
           </ul>
         </section>
 
+
+        {/* GitHub leaderboard */}
+        <section style={{ padding: "80px 0 0" }}>
+          <div className="label" style={{ marginBottom: 32 }}>
+            GitHub leaderboard
+          </div>
+
+          {/* Column headers */}
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "40px 1fr 120px 80px 80px 100px",
+              gap: 24,
+              padding: "12px 0",
+              borderBottom: "1px solid var(--line)",
+              color: "var(--mute)",
+              fontSize: 11,
+              letterSpacing: "0.06em",
+              textTransform: "uppercase",
+            }}
+          >
+            <span />
+            <span>Member</span>
+            <span>GitHub</span>
+            <span style={{ textAlign: "right" }}>Commits</span>
+            <span style={{ textAlign: "right" }}>PRs</span>
+            <span style={{ textAlign: "right" }}>Score</span>
+          </div>
+
+          {githubLeaderboard.map((m, i) => {
+            const hasActivity = m.score > 0;
+            return (
+              <div
+                key={m.memberId}
+                className="fade-up"
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "40px 1fr 120px 80px 80px 100px",
+                  gap: 24,
+                  padding: "20px 0",
+                  borderBottom: "1px solid var(--line-2)",
+                  alignItems: "center",
+                  animationDelay: `${i * 40}ms`,
+                }}
+              >
+                {/* Rank */}
+                <span
+                  className="num display"
+                  style={{
+                    fontSize: 20,
+                    color: i === 0 && hasActivity ? "var(--ink)" : "var(--mute-2)",
+                  }}
+                >
+                  {String(i + 1).padStart(2, "0")}
+                </span>
+
+                {/* Name */}
+                <div>
+                  <div style={{ fontSize: 15, fontWeight: 500 }}>
+                    {m.name}
+                  </div>
+                  {m.githubLogin ? (
+                    <a
+                      href={`https://github.com/${m.githubLogin}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="lk-mute num"
+                      style={{ fontSize: 12 }}
+                    >
+                      @{m.githubLogin}
+                    </a>
+                  ) : (
+                    <span className="mute-ink" style={{ fontSize: 12 }}>
+                      No GitHub linked
+                    </span>
+                  )}
+                </div>
+
+                {/* GitHub username chip */}
+                <span />
+
+                {/* Commits */}
+                <span
+                  className="num"
+                  style={{
+                    textAlign: "right",
+                    fontSize: 15,
+                    color: m.commits > 0 ? "var(--ink)" : "var(--mute-2)",
+                  }}
+                >
+                  {m.commits > 0 ? m.commits : "—"}
+                </span>
+
+                {/* PRs */}
+                <span
+                  className="num"
+                  style={{
+                    textAlign: "right",
+                    fontSize: 15,
+                    color: m.prs > 0 ? "var(--ink)" : "var(--mute-2)",
+                  }}
+                >
+                  {m.prs > 0 ? m.prs : "—"}
+                </span>
+
+                {/* Score + bar */}
+                <div style={{ textAlign: "right" }}>
+                  <div
+                    className="num"
+                    style={{
+                      fontSize: 22,
+                      fontWeight: 500,
+                      color: hasActivity ? "var(--ink)" : "var(--mute-2)",
+                      marginBottom: 6,
+                    }}
+                  >
+                    {hasActivity ? m.score : "—"}
+                  </div>
+                  <div
+                    style={{
+                      height: 3,
+                      background: "var(--line)",
+                      borderRadius: 2,
+                      overflow: "hidden",
+                    }}
+                  >
+                    <div
+                      style={{
+                        height: "100%",
+                        width: `${m.score}%`,
+                        background: i === 0 && hasActivity ? "var(--red)" : "var(--mute)",
+                        borderRadius: 2,
+                        transition: "width 0.4s ease",
+                      }}
+                    />
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+
+          {githubLeaderboard.every((m) => m.score === 0) && (
+            <p className="body mute-ink" style={{ margin: "24px 0 0" }}>
+              No GitHub activity attributed yet. Map member usernames above and Sync.
+            </p>
+          )}
+        </section>
         {/* Jira */}
         <section
           style={{
@@ -458,153 +605,6 @@ export default async function SourcesPage({
                 })}
               </ul>
             </>
-          )}
-        </section>
-
-        {/* GitHub leaderboard */}
-        <section style={{ padding: "80px 0 0" }}>
-          <div className="label" style={{ marginBottom: 32 }}>
-            GitHub leaderboard
-          </div>
-
-          {/* Column headers */}
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "40px 1fr 120px 80px 80px 100px",
-              gap: 24,
-              padding: "12px 0",
-              borderBottom: "1px solid var(--line)",
-              color: "var(--mute)",
-              fontSize: 11,
-              letterSpacing: "0.06em",
-              textTransform: "uppercase",
-            }}
-          >
-            <span />
-            <span>Member</span>
-            <span>GitHub</span>
-            <span style={{ textAlign: "right" }}>Commits</span>
-            <span style={{ textAlign: "right" }}>PRs</span>
-            <span style={{ textAlign: "right" }}>Score</span>
-          </div>
-
-          {githubLeaderboard.map((m, i) => {
-            const hasActivity = m.score > 0;
-            return (
-              <div
-                key={m.memberId}
-                className="fade-up"
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "40px 1fr 120px 80px 80px 100px",
-                  gap: 24,
-                  padding: "20px 0",
-                  borderBottom: "1px solid var(--line-2)",
-                  alignItems: "center",
-                  animationDelay: `${i * 40}ms`,
-                }}
-              >
-                {/* Rank */}
-                <span
-                  className="num display"
-                  style={{
-                    fontSize: 20,
-                    color: i === 0 && hasActivity ? "var(--ink)" : "var(--mute-2)",
-                  }}
-                >
-                  {String(i + 1).padStart(2, "0")}
-                </span>
-
-                {/* Name */}
-                <div>
-                  <div style={{ fontSize: 15, fontWeight: 500 }}>
-                    {m.name}
-                  </div>
-                  {m.githubLogin ? (
-                    <a
-                      href={`https://github.com/${m.githubLogin}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="lk-mute num"
-                      style={{ fontSize: 12 }}
-                    >
-                      @{m.githubLogin}
-                    </a>
-                  ) : (
-                    <span className="mute-ink" style={{ fontSize: 12 }}>
-                      No GitHub linked
-                    </span>
-                  )}
-                </div>
-
-                {/* GitHub username chip */}
-                <span />
-
-                {/* Commits */}
-                <span
-                  className="num"
-                  style={{
-                    textAlign: "right",
-                    fontSize: 15,
-                    color: m.commits > 0 ? "var(--ink)" : "var(--mute-2)",
-                  }}
-                >
-                  {m.commits > 0 ? m.commits : "—"}
-                </span>
-
-                {/* PRs */}
-                <span
-                  className="num"
-                  style={{
-                    textAlign: "right",
-                    fontSize: 15,
-                    color: m.prs > 0 ? "var(--ink)" : "var(--mute-2)",
-                  }}
-                >
-                  {m.prs > 0 ? m.prs : "—"}
-                </span>
-
-                {/* Score + bar */}
-                <div style={{ textAlign: "right" }}>
-                  <div
-                    className="num"
-                    style={{
-                      fontSize: 22,
-                      fontWeight: 500,
-                      color: hasActivity ? "var(--ink)" : "var(--mute-2)",
-                      marginBottom: 6,
-                    }}
-                  >
-                    {hasActivity ? m.score : "—"}
-                  </div>
-                  <div
-                    style={{
-                      height: 3,
-                      background: "var(--line)",
-                      borderRadius: 2,
-                      overflow: "hidden",
-                    }}
-                  >
-                    <div
-                      style={{
-                        height: "100%",
-                        width: `${m.score}%`,
-                        background: i === 0 && hasActivity ? "var(--red)" : "var(--mute)",
-                        borderRadius: 2,
-                        transition: "width 0.4s ease",
-                      }}
-                    />
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-
-          {githubLeaderboard.every((m) => m.score === 0) && (
-            <p className="body mute-ink" style={{ margin: "24px 0 0" }}>
-              No GitHub activity attributed yet. Map member usernames above and Sync.
-            </p>
           )}
         </section>
 
