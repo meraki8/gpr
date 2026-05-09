@@ -30,7 +30,9 @@
     sans-serif;
 }
 
-/* =========== Plain CSS variables (for styles that need them) =========== */
+/* =========== Plain CSS variables =========== */
+/* Default (used by landing page, sign-in, sign-up — anything OUTSIDE
+   AppShell). Light cream, matches the editorial design. */
 :root {
   --bg: #fafaf7;
   --ink: #0a0a0a;
@@ -43,6 +45,39 @@
   --red: #e10600;
   --status-good: #14753f;
   --status-watch: #8a611a;
+  --row-hover: rgba(0, 0, 0, 0.025);
+}
+
+/* AppShell content area — themeable, default dark.
+   Sidebar uses its own fixed dark palette (inline) and is unaffected. */
+[data-app-theme="dark"] {
+  --bg: #0a0a0a;
+  --ink: #f5f5f5;
+  --ink-2: #d4d4d4;
+  --mute: #8e8e8a;
+  --mute-2: #6a6a66;
+  --line: #2a2a2a;
+  --line-2: #1f1f1f;
+  --paper: #161616;
+  --red: #ff3b30;
+  --status-good: #20a04a;
+  --status-watch: #f5a623;
+  --row-hover: rgba(255, 255, 255, 0.04);
+}
+
+[data-app-theme="light"] {
+  --bg: #f5f5f5;
+  --ink: #0a0a0a;
+  --ink-2: #1c1c1a;
+  --mute: #6a6a66;
+  --mute-2: #8e8e8a;
+  --line: #e5e3dc;
+  --line-2: #ececea;
+  --paper: #ffffff;
+  --red: #e10600;
+  --status-good: #14753f;
+  --status-watch: #8a611a;
+  --row-hover: rgba(0, 0, 0, 0.03);
 }
 
 * {
@@ -181,16 +216,22 @@ a {
   padding: 9px 16px;
   border-radius: 999px;
   background: var(--ink);
-  color: #fff;
+  /* Inverse text via the theme's bg color: dark text on light "ink"
+     in dark mode, light text on dark "ink" in light mode. Avoids the
+     hardcoded #fff bug that made buttons invisible in dark mode. */
+  color: var(--bg);
   font-size: 14px;
   font-weight: 500;
-  transition: background 0.15s;
+  transition: background 0.15s, color 0.15s;
   cursor: pointer;
   border: none;
   font-family: inherit;
 }
 .pill:hover {
   background: var(--red);
+  /* Explicit white on red — both --red shades are dark enough for
+     white text contrast, regardless of theme. */
+  color: #fff;
 }
 .pill-ghost {
   background: transparent;
@@ -199,7 +240,7 @@ a {
 }
 .pill-ghost:hover {
   background: var(--ink);
-  color: #fff;
+  color: var(--bg);
 }
 .pill-red {
   background: var(--red);
@@ -227,10 +268,13 @@ a {
   margin: 0 auto;
   padding: 0 40px;
 }
+/* Content container: fills the full width between sidebar and
+   viewport edge. No max-width cap, no auto-centering — pages live
+   left-aligned with consistent 32px padding all around. Per-page
+   paddingBottom inline still wins over the bottom slot here. */
 .wrap-w {
-  max-width: 1320px;
-  margin: 0 auto;
-  padding: 0 40px;
+  width: 100%;
+  padding: 32px;
 }
 
 /* =========== Status dots =========== */
@@ -246,7 +290,7 @@ a {
   transition: background 0.12s;
 }
 .row-hover:hover {
-  background: rgba(0, 0, 0, 0.025);
+  background: var(--row-hover);
   cursor: pointer;
 }
 

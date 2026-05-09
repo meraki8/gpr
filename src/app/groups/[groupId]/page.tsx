@@ -3,7 +3,7 @@ import { AppShell } from "@/components/app-shell";
 import { PageHead } from "@/components/page-head";
 import { Status } from "@/components/status";
 import { requireDbUser } from "@/lib/auth";
-import { getGroup, getMyGroups } from "@/lib/data";
+import { getGroup, getNavContext } from "@/lib/data";
 import { createProject } from "./actions";
 
 function statusFromHealth(score: number): "good" | "watch" | "risk" {
@@ -23,14 +23,19 @@ export default async function GroupPage({
   params: Promise<{ groupId: string }>;
 }) {
   const { groupId } = await params;
-  const [user, allGroups, group] = await Promise.all([
+  const [user, nav, group] = await Promise.all([
     requireDbUser(),
-    getMyGroups(),
+    getNavContext({ groupId }),
     getGroup(groupId),
   ]);
 
   return (
-    <AppShell user={user} groups={allGroups} currentGroupId={group.id}>
+    <AppShell
+      user={user}
+      allGroups={nav.allGroups}
+      activeGroup={nav.activeGroup}
+      groupProjects={nav.groupProjects}
+    >
       <main className="wrap-w" style={{ paddingBottom: 120 }}>
         <PageHead
           eyebrow={`Group · ${group.members.length} member${group.members.length === 1 ? "" : "s"}`}

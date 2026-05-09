@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { requireDbUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { fetchCommits, fetchPullRequests } from "@/lib/github";
+import { KB_SOURCES, addKnowledgeEntries } from "@/lib/kb";
 
 async function requireOwner(projectId: string, userId: string) {
   const member = await db.projectMember.findFirst({
@@ -211,6 +212,30 @@ export async function syncGithubSource(formData: FormData) {
         })),
         skipDuplicates: true,
       });
+
+      await addKnowledgeEntries(
+        commits.map((c) => {
+          const subject = c.commit.message.split("\n")[0].slice(0, 200);
+          const body = c.commit.message.includes("\n")
+            ? c.commit.message.split("\n").slice(1).join("\n").trim()
+            : "";
+          const author = c.author?.login ?? "unknown";
+          return {
+            projectId,
+            source: KB_SOURCES.GITHUB,
+            sourceRefId: `commit:${repo}:${c.sha}`,
+            sourceTypeLabel: "Commit",
+            title: subject,
+            content: [
+              `${repo} · ${c.sha.slice(0, 7)} · @${author}`,
+              body,
+              c.html_url,
+            ]
+              .filter(Boolean)
+              .join("\n"),
+          };
+        }),
+      );
     }
 
     const prs = await fetchPullRequests(owner, name);
@@ -243,6 +268,27 @@ export async function syncGithubSource(formData: FormData) {
         })),
         skipDuplicates: true,
       });
+
+      await addKnowledgeEntries(
+        prs.map((pr) => {
+          const state = pr.merged_at
+            ? "merged"
+            : pr.state === "closed"
+              ? "closed"
+              : "opened";
+          const author = pr.user?.login ?? "unknown";
+          return {
+            projectId,
+            source: KB_SOURCES.GITHUB,
+            sourceRefId: `pr:${repo}:${pr.number}`,
+            sourceTypeLabel: `PR ${state}`,
+            title: `#${pr.number} ${pr.title}`,
+            content: [`${repo} · @${author} · ${state}`, pr.html_url].join(
+              "\n",
+            ),
+          };
+        }),
+      );
     }
   }
 
@@ -253,4 +299,5 @@ export async function syncGithubSource(formData: FormData) {
 
   revalidatePath(`/projects/${projectId}/sources`);
   revalidatePath(`/projects/${projectId}`);
+  revalidatePath(`/projects/${projectId}/kb`);
 }
