@@ -1,96 +1,153 @@
 import "server-only";
 import { ai, AI_MODEL } from "./ai";
 
-// Acceptance criteria are pulled out of the description body. We
-// look for an "Acceptance Criteria" header in any common form
-// (markdown ##, all-caps, trailing colon) and then scan that
-// section for `[ ]` / `[x]` checklist items.
-
-export type AcItem = {
-  text: string;
-  selfReportedDone: boolean;
-};
-
-const HEADER_REGEX =
-  /^\s*(?:#{1,6}\s*)?acceptance\s*criteria\s*:?\s*$/im;
-const CHECKLIST_LINE_REGEX = /^\s*\[\s*([ xX])\s*\]\s+(.+?)\s*$/;
-const NEXT_HEADER_REGEX = /^\s*#{1,6}\s+\S/;
-
-export function parseAcceptanceCriteria(description: string): AcItem[] {
-  if (!description) return [];
-  const lines = description.split(/\r?\n/);
-  const headerIdx = lines.findIndex((l) => HEADER_REGEX.test(l));
-  if (headerIdx === -1) return [];
-
-  const items: AcItem[] = [];
-  for (let i = headerIdx + 1; i < lines.length; i++) {
-    const line = lines[i];
-    if (NEXT_HEADER_REGEX.test(line)) break;
-    const match = line.match(CHECKLIST_LINE_REGEX);
-    if (match) {
-      items.push({
-        text: match[2].trim(),
-        selfReportedDone: match[1].toLowerCase() === "x",
-      });
-    }
-  }
-  return items;
-}
+// Acceptance-criteria evaluation. Rather than regex-parse the
+// description into structured AC items (which only works for one
+// rigid format), we hand the whole description + comments to the
+// model and let it identify the criteria — in any format the team
+// wrote them — and judge each one against the available evidence.
+//
+// Cost is ~$0.0005 per call with the mini model. Worth the
+// flexibility.
 
 export type AcJudgement = {
   acText: string;
-  selfReportedDone: boolean;
+  selfReportedDone: boolean | null;
   aiThinksDone: boolean;
   reason: string;
 };
 
 export type AcVerdict = {
+  hasAc: boolean;
   allMet: boolean;
   judgements: AcJudgement[];
   summary: string;
 };
 
-// Asks the model to judge each AC against the issue description
-// and recent comments. Strict JSON output to avoid free-form
-// rambling that we'd then have to parse heuristically.
+const EMPTY_VERDICT: AcVerdict = {
+  hasAc: false,
+  allMet: true,
+  judgements: [],
+  summary: "No acceptance criteria found in the description.",
+};
+
+function extractAcceptanceCriteriaCandidates(description: string): string[] {
+  const lines = description
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const candidates: string[] = [];
+  let inAcSection = false;
+
+  for (const line of lines) {
+    const heading = line
+      .replace(/^#+\s*/, "")
+      .replace(/[*_`]/g, "")
+      .replace(/:$/, "")
+      .trim()
+      .toLowerCase();
+
+    if (/^(acceptance criteria|ac|definition of done)$/.test(heading)) {
+      inAcSection = true;
+      continue;
+    }
+    if (inAcSection && /^#{1,6}\s+\S/.test(line)) break;
+
+    const checklistMatch = line.match(/^\[( |x|X)\]\s+(.+)$/);
+    const bulletMatch = inAcSection
+      ? line.match(/^(?:[-*]|\d+[.)])\s+(.+)$/)
+      : null;
+    const text = checklistMatch?.[2] ?? bulletMatch?.[1];
+    if (text) candidates.push(text.trim());
+  }
+
+  return [...new Set(candidates)].slice(0, 20);
+}
+
+function isPlausibleAcceptanceCriterion(text: string): boolean {
+  const cleaned = text.trim().replace(/\s+/g, " ");
+  const lower = cleaned.toLowerCase();
+
+  if (cleaned.length < 12) return false;
+  if (cleaned.split(/\s+/).length < 3) return false;
+  if (/^[\d\s+\-*/=().]+$/.test(cleaned)) return false;
+  if (/^(yes|no|maybe|true|false|n\/a|done|todo)$/i.test(cleaned)) {
+    return false;
+  }
+  if (
+    /figment of my imagination/i.test(cleaned) ||
+    /^the project exists\.?$/i.test(cleaned)
+  ) {
+    return false;
+  }
+
+  const hasTestableVerb =
+    /\b(can|shows?|displays?|returns?|creates?|updates?|saves?|rejects?|accepts?|sends?|receives?|loads?|persists?|appears?|opens?|closes?|prevents?|validates?|passes?|fails?|syncs?|maps?|connects?|disconnects?|completes?)\b/.test(
+      lower,
+    );
+  const hasProductSubject =
+    /\b(user|admin|member|team|project|page|screen|button|form|api|webhook|jira|ticket|issue|sprint|leaderboard|auth|login|sign in|session|error|app|data|card|status|comment)\b/.test(
+      lower,
+    );
+
+  return hasTestableVerb && hasProductSubject;
+}
+
 export async function judgeAcceptanceCriteria(input: {
   issueKey: string;
   summary: string;
   description: string;
-  acItems: AcItem[];
   comments: string[];
 }): Promise<AcVerdict> {
-  if (input.acItems.length === 0) {
-    return {
-      allMet: true,
-      judgements: [],
-      summary: "No acceptance criteria provided.",
-    };
+  // Skip the API call entirely if there's nothing to evaluate.
+  if (!input.description || input.description.trim().length < 10) {
+    return EMPTY_VERDICT;
+  }
+
+  const candidates = extractAcceptanceCriteriaCandidates(input.description).filter(
+    isPlausibleAcceptanceCriterion,
+  );
+  if (candidates.length === 0) {
+    return EMPTY_VERDICT;
   }
 
   const prompt = [
     `You are reviewing a Jira ticket marked as Done.`,
-    `Decide for each acceptance criterion whether the available evidence shows it has been met.`,
-    `Be strict but fair: if a criterion is vague or there is no concrete evidence, mark it not done.`,
+    `You will receive candidate acceptance criteria extracted from the ticket description.`,
+    `Only keep candidates that are real acceptance criteria: concrete, testable product or project outcomes that a reviewer could verify from the ticket, comments, linked work, or demo evidence.`,
+    `Ignore candidates that are not real acceptance criteria, including:`,
+    `  - one-word answers such as "yes", "no", or "maybe"`,
+    `  - jokes, contradictions, tautologies, arithmetic, or philosophical statements`,
+    `  - vague statements with no product/project outcome`,
+    `  - meta statements such as "the project exists" unless the ticket is specifically about proving project creation or existence`,
+    `If no candidates are real acceptance criteria, return hasAc=false and an empty judgements list.`,
+    ``,
+    `For each real criterion you keep, decide whether the evidence (description body and recent comments) shows it is met.`,
+    `Be strict on real criteria: if there is no concrete evidence, mark it not met.`,
+    `If you can detect that the team self-reported a checkbox state ([x] or [ ] or similar),`,
+    `record that as selfReportedDone (true/false). Otherwise leave it null.`,
+    `Do not invent criteria. Do not include ignored candidates in judgements.`,
     ``,
     `TICKET: ${input.issueKey} — ${input.summary}`,
     ``,
+    `CANDIDATE CRITERIA:`,
+    candidates.map((c, i) => `${i + 1}. ${c.slice(0, 400)}`).join("\n"),
+    ``,
     `DESCRIPTION:`,
-    input.description.slice(0, 4000) || "(empty)",
+    input.description.slice(0, 6000),
     ``,
     `RECENT COMMENTS:`,
     input.comments.slice(0, 8).map((c, i) => `${i + 1}. ${c.slice(0, 800)}`).join("\n") ||
       "(no comments)",
     ``,
-    `ACCEPTANCE CRITERIA:`,
-    input.acItems
-      .map(
-        (ac, i) =>
-          `${i + 1}. [team marked ${ac.selfReportedDone ? "DONE" : "NOT DONE"}] ${ac.text}`,
-      )
-      .join("\n"),
-    ``,
-    `Respond as JSON: {"judgements": [{"index": 1, "done": true|false, "reason": "..."}], "summary": "..."}`,
+    `Respond as JSON:`,
+    `{`,
+    `  "hasAc": true|false,`,
+    `  "judgements": [`,
+    `    { "acText": "...", "selfReportedDone": true|false|null, "aiThinksDone": true|false, "reason": "..." }`,
+    `  ],`,
+    `  "summary": "one-sentence overall verdict"`,
+    `}`,
   ].join("\n");
 
   const completion = await ai.chat.completions.create({
@@ -101,32 +158,46 @@ export async function judgeAcceptanceCriteria(input: {
 
   const raw = completion.choices[0]?.message?.content ?? "{}";
   let parsed: {
-    judgements?: { index?: number; done?: boolean; reason?: string }[];
+    hasAc?: boolean;
+    judgements?: {
+      acText?: string;
+      selfReportedDone?: boolean | null;
+      aiThinksDone?: boolean;
+      reason?: string;
+    }[];
     summary?: string;
   } = {};
   try {
     parsed = JSON.parse(raw);
   } catch {
-    parsed = {};
+    return EMPTY_VERDICT;
   }
 
-  const judgements: AcJudgement[] = input.acItems.map((ac, i) => {
-    const j = parsed.judgements?.find((x) => x.index === i + 1);
-    return {
-      acText: ac.text,
-      selfReportedDone: ac.selfReportedDone,
-      aiThinksDone: j?.done === true,
-      reason: j?.reason?.slice(0, 400) ?? "(no reason returned)",
-    };
-  });
+  const judgements: AcJudgement[] = (parsed.judgements ?? [])
+    .filter((j) => j.acText && j.acText.trim().length > 0)
+    .filter((j) => isPlausibleAcceptanceCriterion(j.acText!))
+    .map((j) => ({
+      acText: j.acText!.trim().slice(0, 400),
+      selfReportedDone:
+        j.selfReportedDone === true || j.selfReportedDone === false
+          ? j.selfReportedDone
+          : null,
+      aiThinksDone: j.aiThinksDone === true,
+      reason: (j.reason ?? "").slice(0, 400) || "(no reason returned)",
+    }));
+
+  const hasAc = judgements.length > 0 && parsed.hasAc !== false;
 
   return {
-    allMet: judgements.every((j) => j.aiThinksDone),
+    hasAc,
+    allMet: hasAc ? judgements.every((j) => j.aiThinksDone) : true,
     judgements,
     summary:
       parsed.summary?.slice(0, 600) ??
-      (judgements.every((j) => j.aiThinksDone)
-        ? "All acceptance criteria appear met."
-        : "Some acceptance criteria are not yet met."),
+      (hasAc
+        ? judgements.every((j) => j.aiThinksDone)
+          ? "All acceptance criteria appear met."
+          : "Some acceptance criteria are not met."
+        : "No acceptance criteria found in the description."),
   };
 }

@@ -4,16 +4,28 @@ import { addKnowledgeEntries, KB_SOURCES } from "./kb";
 import { recomputeMemberScores } from "./scoring";
 import {
   fetchIssueComments,
+  fetchIssueStatusChanges,
   searchProjectIssues,
   type JiraAuth,
   type JiraIssue,
+  type JiraStatusChange,
 } from "./jira";
-import { judgeAcceptanceCriteria, parseAcceptanceCriteria } from "./jira-ac";
+import { judgeAcceptanceCriteria } from "./jira-ac";
 
 // One day in ms — used for the overdue/stale rate-limiting on
 // externalIds so the same condition only fires one event per day.
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 const STALE_DAYS = 7;
+
+// Cap each sync to the most-recently-updated N issues. Keeps a
+// click-Sync-Now from stalling for a minute on a backlog of 200
+// issues. Older ones get picked up by subsequent syncs / the cron.
+const ISSUES_PER_SYNC = 25;
+// Run AC judging concurrently up to this many at a time. Keeps the
+// OpenAI calls from being a sequential bottleneck while staying
+// well under the per-key rate limit.
+const AC_JUDGE_CONCURRENCY = 5;
+const CHANGELOG_CONCURRENCY = 5;
 
 const EVENT_WEIGHTS: Record<string, number> = {
   issue_created: 0.5,
@@ -116,15 +128,19 @@ export async function syncJiraProject(
     return summary;
   }
 
-  let issues: JiraIssue[];
+  let allIssues: JiraIssue[];
   try {
-    issues = await searchProjectIssues(ctx.auth, ctx.projectKey);
+    allIssues = await searchProjectIssues(ctx.auth, ctx.projectKey);
   } catch (err) {
     summary.errors.push(
       err instanceof Error ? err.message : "Jira search failed",
     );
     return summary;
   }
+  // Issues come back sorted by `updated DESC` from the JQL ORDER BY,
+  // so the slice keeps the freshest ones — exactly what the user
+  // is most likely to be looking at after moving a ticket.
+  const issues = allIssues.slice(0, ISSUES_PER_SYNC);
   summary.scanned = issues.length;
 
   // Map Jira accountId -> GPR userId once.
@@ -137,34 +153,88 @@ export async function syncJiraProject(
   );
 
   // Pull the most recent event we already have per Jira issue.
-  // Storing this in payloadJson.issueId so we can find prior status.
+  // Tracking both the status name and the status category lets us
+  // detect transitions INTO Done (so we re-judge AC) without
+  // double-firing on cosmetic changes.
   const priorEvents = await db.contributionEvent.findMany({
     where: { projectId, sourceType: "JIRA" },
     orderBy: { occurredAt: "desc" },
   });
-  const lastSeenByIssueId = new Map<string, { status: string; eventType: string }>();
+  const lastSeenByIssueId = new Map<
+    string,
+    { status: string; statusCategory: string; occurredAt: Date }
+  >();
   for (const ev of priorEvents) {
     const payload = ev.payloadJson as {
       issueId?: string;
       status?: string | null;
+      statusCategory?: string;
     };
     if (!payload.issueId) continue;
     if (!lastSeenByIssueId.has(payload.issueId)) {
       lastSeenByIssueId.set(payload.issueId, {
         status: payload.status ?? "",
-        eventType: ev.eventType,
+        statusCategory: payload.statusCategory ?? "",
+        occurredAt: ev.occurredAt,
       });
     }
   }
 
-  // Track the issue IDs we've already emitted a "completed" event
-  // for so we don't pay for the AC judge twice on rapid syncs.
-  const completedIssueIds = new Set<string>();
-  for (const ev of priorEvents) {
-    if (ev.eventType === "issue_completed") {
-      const payload = ev.payloadJson as { issueId?: string };
-      if (payload.issueId) completedIssueIds.add(payload.issueId);
-    }
+  // Pre-judge AC in parallel for every issue currently in Done that
+  // wasn't already in Done last time we saw it. AI handles AC
+  // identification in any format, so no regex pre-parse is needed.
+  type AcVerdict = Awaited<ReturnType<typeof judgeAcceptanceCriteria>>;
+  const acVerdictByIssueId = new Map<string, AcVerdict>();
+
+  const judgeQueue: JiraIssue[] = [];
+  for (const issue of issues) {
+    if (issue.statusCategory !== "done") continue;
+    const prior = lastSeenByIssueId.get(issue.id);
+    // First time we've seen this issue, OR it just transitioned
+    // INTO Done — both warrant a fresh AC judgement.
+    const isFreshlyDone = !prior || prior.statusCategory !== "done";
+    if (isFreshlyDone) judgeQueue.push(issue);
+  }
+
+  for (let i = 0; i < judgeQueue.length; i += AC_JUDGE_CONCURRENCY) {
+    const batch = judgeQueue.slice(i, i + AC_JUDGE_CONCURRENCY);
+    await Promise.all(
+      batch.map(async (issue) => {
+        try {
+          const comments = await fetchIssueComments(ctx.auth, issue.key);
+          const verdict = await judgeAcceptanceCriteria({
+            issueKey: issue.key,
+            summary: issue.summary,
+            description: issue.description,
+            comments,
+          });
+          acVerdictByIssueId.set(issue.id, verdict);
+        } catch (err) {
+          summary.errors.push(
+            `AC judge failed for ${issue.key}: ${err instanceof Error ? err.message : "unknown"}`,
+          );
+        }
+      }),
+    );
+  }
+
+  const statusChangesByIssueId = new Map<string, JiraStatusChange[]>();
+  for (let i = 0; i < issues.length; i += CHANGELOG_CONCURRENCY) {
+    const batch = issues.slice(i, i + CHANGELOG_CONCURRENCY);
+    await Promise.all(
+      batch.map(async (issue) => {
+        const prior = lastSeenByIssueId.get(issue.id);
+        if (prior && prior.status === issue.statusName) return;
+        try {
+          const changes = await fetchIssueStatusChanges(ctx.auth, issue.key);
+          statusChangesByIssueId.set(issue.id, changes);
+        } catch (err) {
+          summary.errors.push(
+            `Jira changelog failed for ${issue.key}: ${err instanceof Error ? err.message : "unknown"}`,
+          );
+        }
+      }),
+    );
   }
 
   for (const issue of issues) {
@@ -193,71 +263,85 @@ export async function syncJiraProject(
 
     try {
       if (!prior) {
-        await writeEvent(source.id, projectId, {
+        const wrote = await writeEvent(source.id, projectId, {
           externalId: `created:${issue.id}`,
           eventType: "issue_created",
           payload: basePayload,
           userId,
           occurredAt: new Date(issue.created),
         });
-        summary.created += 1;
-      } else if (prior.status && prior.status !== issue.statusName) {
-        await writeEvent(source.id, projectId, {
+        if (wrote) summary.created += 1;
+      }
+
+      const changes = statusChangesByIssueId.get(issue.id) ?? [];
+      let wroteStatusChange = false;
+      for (const change of changes) {
+        if (!change.fromStatus || change.fromStatus === change.toStatus) continue;
+        const changedAtMs = Date.parse(change.changedAt);
+        if (Number.isNaN(changedAtMs)) continue;
+        if (prior && changedAtMs <= prior.occurredAt.getTime()) continue;
+        const wrote = await writeEvent(source.id, projectId, {
+          externalId: `updated:${issue.id}:${change.changedAt}:${change.fromStatus}:${change.toStatus}`,
+          eventType: "issue_updated",
+          payload: {
+            ...basePayload,
+            status: change.toStatus,
+            previousStatus: change.fromStatus,
+          },
+          userId,
+          occurredAt: new Date(change.changedAt),
+        });
+        if (wrote) {
+          wroteStatusChange = true;
+          summary.updated += 1;
+        }
+      }
+
+      if (
+        prior &&
+        prior.status &&
+        prior.status !== issue.statusName &&
+        !wroteStatusChange
+      ) {
+        const wrote = await writeEvent(source.id, projectId, {
           externalId: `updated:${issue.id}:${issue.updated}`,
           eventType: "issue_updated",
           payload: { ...basePayload, previousStatus: prior.status },
           userId,
           occurredAt: new Date(issue.updated),
         });
-        summary.updated += 1;
+        if (wrote) summary.updated += 1;
       }
 
-      // Completion is the moment we score the AC.
-      if (
+      // Completion fires on every transition INTO Done (including
+      // the first sight of an already-Done issue). External ID is
+      // scoped by `updated` so a Done → In Progress → Done cycle
+      // produces a fresh completed event with a fresh AC verdict.
+      const isFreshlyDone =
         issue.statusCategory === "done" &&
-        !completedIssueIds.has(issue.id)
-      ) {
-        const acItems = parseAcceptanceCriteria(issue.description);
-        let acVerdict = null as Awaited<ReturnType<typeof judgeAcceptanceCriteria>> | null;
-        if (acItems.length > 0) {
-          try {
-            const comments = await fetchIssueComments(ctx.auth, issue.key);
-            acVerdict = await judgeAcceptanceCriteria({
-              issueKey: issue.key,
-              summary: issue.summary,
-              description: issue.description,
-              acItems,
-              comments,
-            });
-          } catch (err) {
-            summary.errors.push(
-              `AC judge failed for ${issue.key}: ${err instanceof Error ? err.message : "unknown"}`,
-            );
-          }
-        }
+        (!prior || prior.statusCategory !== "done");
+      if (isFreshlyDone) {
+        const acVerdict = acVerdictByIssueId.get(issue.id) ?? null;
 
         const acPayload = acVerdict
           ? {
-              acItems: acItems.map((ac) => ({
-                text: ac.text,
-                selfReportedDone: ac.selfReportedDone,
-              })),
+              acHasAc: acVerdict.hasAc,
               acAllMet: acVerdict.allMet,
               acSummary: acVerdict.summary,
               acJudgements: acVerdict.judgements,
             }
-          : { acItems: acItems.map((ac) => ({ text: ac.text, selfReportedDone: ac.selfReportedDone })) };
+          : {};
 
-        const acFailed = acVerdict !== null && !acVerdict.allMet;
+        const acFailed =
+          acVerdict !== null && acVerdict.hasAc && !acVerdict.allMet;
 
         await writeEvent(source.id, projectId, {
-          externalId: `completed:${issue.id}`,
+          externalId: `completed:${issue.id}:${issue.updated}`,
           eventType: acFailed ? "issue_completed_ac_failed" : "issue_completed",
           payload: { ...basePayload, ...acPayload },
           userId,
           occurredAt: new Date(issue.updated),
         });
-        completedIssueIds.add(issue.id);
         summary.completed += 1;
 
         if (acFailed && userId && acVerdict) {

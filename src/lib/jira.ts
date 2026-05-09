@@ -39,10 +39,20 @@ export type JiraIssue = {
   sprintActiveName: string | null;
 };
 
+export type JiraStatusChange = {
+  changedAt: string;
+  fromStatus: string | null;
+  toStatus: string;
+};
+
 function authHeader(auth: JiraAuth): string {
   const raw = `${auth.email}:${auth.apiToken}`;
   return `Basic ${Buffer.from(raw).toString("base64")}`;
 }
+
+type AdfTaskNode = AdfNode & {
+  attrs?: { state?: string };
+};
 
 function adfToPlainText(node: AdfNode | undefined | null): string {
   if (!node) return "";
@@ -57,6 +67,14 @@ function adfToPlainText(node: AdfNode | undefined | null): string {
       return `${childText}\n`;
     case "hardBreak":
       return "\n";
+    // Jira's native checklist UI emits taskList -> taskItem nodes
+    // with state="DONE"|"TODO". Render them as `[x]` / `[ ]` so the
+    // AC parser sees the same shape it does for typed checkboxes.
+    case "taskItem": {
+      const state = (node as AdfTaskNode).attrs?.state ?? "TODO";
+      const box = state === "DONE" ? "[x]" : "[ ]";
+      return `${box} ${childText.trim()}\n`;
+    }
     default:
       return childText;
   }
@@ -76,6 +94,22 @@ type RawIssue = {
     created?: string;
     [customField: string]: unknown;
   };
+};
+
+type RawChangelog = {
+  values?: {
+    created?: string;
+    items?: {
+      field?: string;
+      fieldId?: string;
+      fromString?: string | null;
+      toString?: string | null;
+    }[];
+  }[];
+  startAt?: number;
+  maxResults?: number;
+  total?: number;
+  isLast?: boolean;
 };
 
 // Jira returns sprint info on a custom field whose ID varies per
@@ -139,49 +173,60 @@ const HEADERS_BASE: HeadersInit = {
   "User-Agent": "GPR/1.0",
 };
 
-// Pulls every issue in the project. Paginates 100 at a time. ORDER
-// BY updated DESC keeps the most recently changed issues first so
-// Sync Now feels responsive even when the project is large.
+// Pulls every issue in the project via the new /rest/api/3/search/jql
+// endpoint. The legacy /rest/api/3/search was retired in 2025
+// (Atlassian CHANGE-2046). Pagination is now token-based: the
+// response carries `nextPageToken` and `isLast` instead of
+// startAt/total.
 export async function searchProjectIssues(
   auth: JiraAuth,
   projectKey: string,
 ): Promise<JiraIssue[]> {
   const issues: JiraIssue[] = [];
-  let startAt = 0;
-  const pageSize = 100;
   // Hard cap so a misconfigured project can't burn the whole sync
   // budget — 1000 issues is plenty for a hackathon-scale workspace.
   const HARD_CAP = 1000;
+  let nextPageToken: string | undefined;
+
+  // The new endpoint requires fields as an array. "*all" still
+  // works and is needed to pick up the sprint custom field whose
+  // ID varies per workspace.
+  const fields = ["*all"];
 
   while (issues.length < HARD_CAP) {
-    const url = new URL(`${auth.baseUrl}/rest/api/3/search`);
-    url.searchParams.set("jql", `project = "${projectKey}" ORDER BY updated DESC`);
-    url.searchParams.set("startAt", String(startAt));
-    url.searchParams.set("maxResults", String(pageSize));
-    url.searchParams.set(
-      "fields",
-      "summary,status,assignee,duedate,priority,description,updated,created,*all",
-    );
+    const body: Record<string, unknown> = {
+      jql: `project = "${projectKey}" ORDER BY updated DESC`,
+      fields,
+      maxResults: 100,
+    };
+    if (nextPageToken) body.nextPageToken = nextPageToken;
 
-    const res = await fetch(url, {
-      headers: { ...HEADERS_BASE, Authorization: authHeader(auth) },
+    const res = await fetch(`${auth.baseUrl}/rest/api/3/search/jql`, {
+      method: "POST",
+      headers: {
+        ...HEADERS_BASE,
+        Authorization: authHeader(auth),
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
       cache: "no-store",
     });
     if (!res.ok) {
-      const body = await res.text();
+      const text = await res.text();
       throw new Error(
-        `Jira search ${projectKey}: ${res.status} ${res.statusText} — ${body.slice(0, 300)}`,
+        `Jira search ${projectKey}: ${res.status} ${res.statusText} — ${text.slice(0, 300)}`,
       );
     }
     const json = (await res.json()) as {
       issues?: RawIssue[];
-      total?: number;
-      maxResults?: number;
+      nextPageToken?: string;
+      isLast?: boolean;
     };
     const page = (json.issues ?? []).map((i) => toJiraIssue(i, auth.baseUrl));
     issues.push(...page);
-    if (page.length < pageSize) break;
-    startAt += pageSize;
+
+    if (json.isLast || !json.nextPageToken) break;
+    nextPageToken = json.nextPageToken;
   }
 
   return issues;
@@ -206,4 +251,52 @@ export async function fetchIssueComments(
   return (json.comments ?? [])
     .map((c) => adfToPlainText(c.body).trim())
     .filter((s) => s.length > 0);
+}
+
+export async function fetchIssueStatusChanges(
+  auth: JiraAuth,
+  issueKey: string,
+  limit = 20,
+): Promise<JiraStatusChange[]> {
+  const changes: JiraStatusChange[] = [];
+  let startAt = 0;
+  const maxResults = 100;
+
+  while (changes.length < limit) {
+    const url = new URL(
+      `${auth.baseUrl}/rest/api/3/issue/${encodeURIComponent(issueKey)}/changelog`,
+    );
+    url.searchParams.set("startAt", String(startAt));
+    url.searchParams.set("maxResults", String(maxResults));
+
+    const res = await fetch(url, {
+      headers: { ...HEADERS_BASE, Authorization: authHeader(auth) },
+      cache: "no-store",
+    });
+    if (!res.ok) return changes;
+
+    const json = (await res.json()) as RawChangelog;
+    const values = json.values ?? [];
+    for (const history of values) {
+      for (const item of history.items ?? []) {
+        if (item.field !== "status" && item.fieldId !== "status") continue;
+        if (!history.created || !item.toString) continue;
+        changes.push({
+          changedAt: history.created,
+          fromStatus: item.fromString ?? null,
+          toStatus: item.toString,
+        });
+        if (changes.length >= limit) break;
+      }
+      if (changes.length >= limit) break;
+    }
+
+    const nextStart = startAt + (json.maxResults ?? maxResults);
+    if (json.isLast || nextStart >= (json.total ?? nextStart)) break;
+    startAt = nextStart;
+  }
+
+  return changes.sort(
+    (a, b) => Date.parse(a.changedAt) - Date.parse(b.changedAt),
+  );
 }

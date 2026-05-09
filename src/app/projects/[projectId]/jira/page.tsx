@@ -21,10 +21,39 @@ type JiraConfig = {
 
 type AcJudgement = {
   acText: string;
-  selfReportedDone: boolean;
+  selfReportedDone: boolean | null;
   aiThinksDone: boolean;
   reason: string;
 };
+
+function isPlausibleAc(text: string): boolean {
+  const cleaned = text.trim().replace(/\s+/g, " ");
+  const lower = cleaned.toLowerCase();
+
+  if (cleaned.length < 12) return false;
+  if (cleaned.split(/\s+/).length < 3) return false;
+  if (/^[\d\s+\-*/=().]+$/.test(cleaned)) return false;
+  if (/^(yes|no|maybe|true|false|n\/a|done|todo)$/i.test(cleaned)) {
+    return false;
+  }
+  if (
+    /figment of my imagination/i.test(cleaned) ||
+    /^the project exists\.?$/i.test(cleaned)
+  ) {
+    return false;
+  }
+
+  const hasTestableVerb =
+    /\b(can|shows?|displays?|returns?|creates?|updates?|saves?|rejects?|accepts?|sends?|receives?|loads?|persists?|appears?|opens?|closes?|prevents?|validates?|passes?|fails?|syncs?|maps?|connects?|disconnects?|completes?)\b/.test(
+      lower,
+    );
+  const hasProductSubject =
+    /\b(user|admin|member|team|project|page|screen|button|form|api|webhook|jira|ticket|issue|sprint|leaderboard|auth|login|sign in|session|error|app|data|card|status|comment)\b/.test(
+      lower,
+    );
+
+  return hasTestableVerb && hasProductSubject;
+}
 
 function maskToken(token: string | undefined): string {
   if (!token) return "—";
@@ -417,6 +446,17 @@ export default async function JiraPage({
               const showAc =
                 e.eventType === "issue_completed" ||
                 e.eventType === "issue_completed_ac_failed";
+              const acJudgements = (payload.acJudgements ?? []).filter((j) =>
+                isPlausibleAc(j.acText),
+              );
+              const acAllMet =
+                acJudgements.length === 0 ||
+                acJudgements.every((j) => j.aiThinksDone);
+              const eventMeta =
+                e.eventType === "issue_completed_ac_failed" &&
+                acJudgements.length === 0
+                  ? { label: "completed", color: "#10b981" }
+                  : meta;
               return (
                 <div
                   key={e.id}
@@ -441,8 +481,8 @@ export default async function JiraPage({
                         day: "numeric",
                       })}
                     </span>
-                    <span className="label" style={{ color: meta.color }}>
-                      {meta.label}
+                    <span className="label" style={{ color: eventMeta.color }}>
+                      {eventMeta.label}
                     </span>
                     <span
                       className="num"
@@ -480,20 +520,20 @@ export default async function JiraPage({
                       {payload.previousStatus} → {payload.status}
                     </div>
                   )}
-                  {showAc && payload.acJudgements && payload.acJudgements.length > 0 && (
+                  {showAc && acJudgements.length > 0 && (
                     <div style={{ marginTop: 12, paddingLeft: 124 }}>
                       <div
                         style={{
                           fontSize: 12,
-                          color: payload.acAllMet ? "#10b981" : "var(--red)",
+                          color: acAllMet ? "#10b981" : "var(--red)",
                           marginBottom: 8,
                           fontWeight: 500,
                         }}
                       >
-                        {payload.acAllMet ? "✓ All AC met" : "⚠ AC not met"} — {payload.acSummary}
+                        {acAllMet ? "✓ All AC met" : "⚠ AC not met"} — {payload.acSummary}
                       </div>
                       <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "grid", gap: 4 }}>
-                        {payload.acJudgements.map((j, idx) => (
+                        {acJudgements.map((j, idx) => (
                           <li
                             key={idx}
                             style={{
