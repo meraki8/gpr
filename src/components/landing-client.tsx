@@ -574,6 +574,12 @@ export function LandingClient({ isSignedIn }: Props) {
           <Link className="lk" href="#caps">
             Capabilities
           </Link>
+          <Link className="lk" href="/docs">
+            Docs
+          </Link>
+          <Link className="lk" href="/changelog">
+            Changelog
+          </Link>
           <Link className="lk pill" href={ctaHref}>
             {ctaLabel}
           </Link>

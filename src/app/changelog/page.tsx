@@ -155,7 +155,13 @@ type RoadmapItem = {
 export default async function ChangelogPage() {
   return (
     <main className="flex flex-1 flex-col">
-      <PublicNav links={[{ href: "/", label: "Home" }]} />
+      <PublicNav
+        links={[
+          { href: "/", label: "Home" },
+          { href: "/#how", label: "How it works" },
+          { href: "/docs", label: "Docs" },
+        ]}
+      />
 
       <section className="wrap" style={{ paddingTop: 100, paddingBottom: 40 }}>
         <div className="label fade-up" style={{ marginBottom: 24 }}>
