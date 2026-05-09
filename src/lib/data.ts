@@ -199,6 +199,153 @@ export async function getProjectSources(projectId: string) {
   return { project, isOwner: member.role === "OWNER" };
 }
 
+// Resolves the sidebar context from whatever URL the user is on.
+// Either groupId or projectId may be passed; the other is derived.
+// Returned shape is everything AppShell needs to render its left rail
+// in one place — pages call this once and pass the result through.
+export async function getNavContext({
+  groupId,
+  projectId,
+}: {
+  groupId?: string;
+  projectId?: string;
+}) {
+  const user = await requireDbUser();
+  const allGroups = await getMyGroups();
+
+  let activeGroupId = groupId ?? null;
+  if (!activeGroupId && projectId) {
+    const proj = await db.project.findFirst({
+      where: { id: projectId, deletedAt: null },
+      select: { groupId: true },
+    });
+    activeGroupId = proj?.groupId ?? null;
+  }
+
+  if (!activeGroupId) {
+    return {
+      allGroups,
+      activeGroup: null as { id: string; name: string } | null,
+      groupProjects: [] as { id: string; name: string }[],
+    };
+  }
+
+  const activeGroup =
+    allGroups.find((g) => g.id === activeGroupId) ?? null;
+  if (!activeGroup) {
+    return {
+      allGroups,
+      activeGroup: null as { id: string; name: string } | null,
+      groupProjects: [] as { id: string; name: string }[],
+    };
+  }
+
+  // Projects in the active group, filtered to ones the user can see —
+  // mirrors the access rules in getMyGroups so we don't leak siblings.
+  const groupProjects = await db.project.findMany({
+    where: {
+      groupId: activeGroupId,
+      deletedAt: null,
+      OR: [
+        { members: { some: { userId: user.id } } },
+        {
+          invites: {
+            some: {
+              email: { equals: user.email, mode: "insensitive" },
+              acceptedAt: { not: null },
+            },
+          },
+        },
+      ],
+    },
+    select: { id: true, name: true },
+    orderBy: { createdAt: "desc" },
+  });
+
+  return {
+    allGroups: allGroups.map((g) => ({ id: g.id, name: g.name })),
+    activeGroup: { id: activeGroup.id, name: activeGroup.name },
+    groupProjects,
+  };
+}
+
+export async function getProjectMembers(projectId: string) {
+  const user = await requireDbUser();
+  const project = await db.project.findFirst({
+    where: {
+      id: projectId,
+      deletedAt: null,
+      members: { some: { userId: user.id } },
+    },
+    include: {
+      group: true,
+      members: {
+        include: { user: true },
+        orderBy: [{ contributionScore: "desc" }, { joinedAt: "asc" }],
+      },
+      invites: {
+        where: { acceptedAt: null, expiresAt: { gt: new Date() } },
+        orderBy: { createdAt: "desc" },
+      },
+    },
+  });
+  if (!project) notFound();
+  return project;
+}
+
+export async function getProjectTranscripts(projectId: string) {
+  const user = await requireDbUser();
+  const project = await db.project.findFirst({
+    where: {
+      id: projectId,
+      deletedAt: null,
+      members: { some: { userId: user.id } },
+    },
+    include: {
+      group: true,
+      transcripts: {
+        orderBy: { createdAt: "desc" },
+        include: {
+          uploader: true,
+          matchReports: { select: { id: true, status: true } },
+        },
+      },
+      members: { where: { userId: user.id }, take: 1 },
+    },
+  });
+  if (!project) notFound();
+  const isOwner = project.members[0]?.role === "OWNER";
+  return { project, isOwner };
+}
+
+export async function getProjectReportsList(projectId: string) {
+  const user = await requireDbUser();
+  const project = await db.project.findFirst({
+    where: {
+      id: projectId,
+      deletedAt: null,
+      members: { some: { userId: user.id } },
+    },
+    include: {
+      group: true,
+      members: { where: { userId: user.id }, take: 1 },
+      matchReports: {
+        orderBy: { createdAt: "desc" },
+        include: {
+          _count: { select: { cards: true, memberReports: true } },
+        },
+      },
+    },
+  });
+  if (!project) notFound();
+  const isOwner = project.members[0]?.role === "OWNER";
+  // Members never see drafts — only owners get to review them.
+  const visibleReports = isOwner
+    ? project.matchReports
+    : project.matchReports.filter((r) => r.status === "PUBLISHED");
+  return { project, isOwner, reports: visibleReports };
+}
+
 export async function getProjectKb(projectId: string, source?: string) {
   const user = await requireDbUser();
   const project = await db.project.findFirst({

@@ -2,7 +2,7 @@ import Link from "next/link";
 import { AppShell } from "@/components/app-shell";
 import { PageHead } from "@/components/page-head";
 import { requireDbUser } from "@/lib/auth";
-import { getMyGroups, getProjectKb } from "@/lib/data";
+import { getNavContext, getProjectKb } from "@/lib/data";
 import { KB_SOURCES } from "@/lib/kb";
 import { addManualKnowledgeEntry } from "./actions";
 
@@ -34,10 +34,10 @@ export default async function KnowledgeBasePage({
   const activeSource =
     rawSource && validSources.has(rawSource) ? rawSource : null;
 
-  const [user, allGroups, { project, entries, counts, isOwner }] =
+  const [user, nav, { project, entries, counts, isOwner }] =
     await Promise.all([
       requireDbUser(),
-      getMyGroups(),
+      getNavContext({ projectId }),
       getProjectKb(projectId, activeSource ?? undefined),
     ]);
 
@@ -58,12 +58,10 @@ export default async function KnowledgeBasePage({
   return (
     <AppShell
       user={user}
-      groups={allGroups}
-      currentProject={{
-        id: project.id,
-        name: project.name,
-        group: { id: project.group.id, name: project.group.name },
-      }}
+      allGroups={nav.allGroups}
+      activeGroup={nav.activeGroup}
+      groupProjects={nav.groupProjects}
+      currentProject={{ id: project.id, name: project.name }}
     >
       <main className="wrap-w" style={{ paddingBottom: 160 }}>
         <PageHead

@@ -3,7 +3,7 @@ import { AppShell } from "@/components/app-shell";
 import { Score } from "@/components/score";
 import { RefCard, cardKindFromCardType } from "@/components/ref-card";
 import { requireDbUser } from "@/lib/auth";
-import { getMatchReport, getMyGroups } from "@/lib/data";
+import { getMatchReport, getNavContext } from "@/lib/data";
 import { approveCard, dismissCard, publishReport } from "./actions";
 
 export default async function ReportPage({
@@ -12,9 +12,9 @@ export default async function ReportPage({
   params: Promise<{ projectId: string; reportId: string }>;
 }) {
   const { projectId, reportId } = await params;
-  const [user, allGroups, report] = await Promise.all([
+  const [user, nav, report] = await Promise.all([
     requireDbUser(),
-    getMyGroups(),
+    getNavContext({ projectId }),
     getMatchReport(reportId),
   ]);
 
@@ -41,14 +41,12 @@ export default async function ReportPage({
   return (
     <AppShell
       user={user}
-      groups={allGroups}
+      allGroups={nav.allGroups}
+      activeGroup={nav.activeGroup}
+      groupProjects={nav.groupProjects}
       currentProject={{
         id: report.project.id,
         name: report.project.name,
-        group: {
-          id: report.project.group.id,
-          name: report.project.group.name,
-        },
       }}
     >
       <main className="wrap-w" style={{ paddingBottom: 160 }}>
