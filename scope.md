@@ -153,7 +153,7 @@ No confrontation. No awkward conversations. Just evidence.
 - **Database:** PostgreSQL hosted on Railway
 - **ORM:** Prisma
 - **Deployment:** Vercel
-- **AI:** Claude API via Anthropic SDK
+- **AI:** OpenAI API (GPT-5.4 Mini default) via the OpenAI Node SDK
 - **File Storage:** Modal or Vercel Blob
 - **Webhooks:** Make.com for Jira event watching
 - **Email:** Resend for nudge emails and weekly digest
