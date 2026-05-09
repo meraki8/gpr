@@ -78,7 +78,13 @@ export async function getMatchReport(reportId: string) {
       },
     },
     include: {
-      project: { include: { group: true } },
+      project: {
+        include: {
+          group: true,
+          // Just the current user's membership row, to read role.
+          members: { where: { userId: user.id } },
+        },
+      },
       transcript: true,
       memberReports: {
         include: { user: true },
@@ -91,5 +97,16 @@ export async function getMatchReport(reportId: string) {
     },
   });
   if (!report) notFound();
-  return report;
+
+  const isOwner = report.project.members[0]?.role === "OWNER";
+
+  // Draft reports are owner-only.
+  if (report.status === "DRAFT" && !isOwner) notFound();
+
+  // Non-owners only see approved cards.
+  const visibleCards = isOwner
+    ? report.cards
+    : report.cards.filter((c) => c.status === "APPROVED");
+
+  return { ...report, cards: visibleCards, isOwner };
 }
