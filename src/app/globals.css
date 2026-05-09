@@ -216,16 +216,22 @@ a {
   padding: 9px 16px;
   border-radius: 999px;
   background: var(--ink);
-  color: #fff;
+  /* Inverse text via the theme's bg color: dark text on light "ink"
+     in dark mode, light text on dark "ink" in light mode. Avoids the
+     hardcoded #fff bug that made buttons invisible in dark mode. */
+  color: var(--bg);
   font-size: 14px;
   font-weight: 500;
-  transition: background 0.15s;
+  transition: background 0.15s, color 0.15s;
   cursor: pointer;
   border: none;
   font-family: inherit;
 }
 .pill:hover {
   background: var(--red);
+  /* Explicit white on red — both --red shades are dark enough for
+     white text contrast, regardless of theme. */
+  color: #fff;
 }
 .pill-ghost {
   background: transparent;
@@ -234,7 +240,7 @@ a {
 }
 .pill-ghost:hover {
   background: var(--ink);
-  color: #fff;
+  color: var(--bg);
 }
 .pill-red {
   background: var(--red);
@@ -262,12 +268,12 @@ a {
   margin: 0 auto;
   padding: 0 40px;
 }
-/* Linear/Notion-style content container: capped width, centered in
-   the main column, generous side padding so content doesn't hug the
-   sidebar edge. Pages still set their own paddingBottom inline. */
+/* Content container: fills the full width between sidebar and
+   viewport edge. No max-width cap, no auto-centering — pages live
+   left-aligned with consistent 32px padding all around. Per-page
+   paddingBottom inline still wins over the bottom slot here. */
 .wrap-w {
-  max-width: 1152px; /* tailwind max-w-6xl */
-  margin: 0 auto;
+  width: 100%;
   padding: 32px;
 }
 
