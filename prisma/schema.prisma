@@ -73,32 +73,34 @@ model User {
   avatarUrl           String?
   createdAt           DateTime        @default(now())
   updatedAt           DateTime        @updatedAt
-  cardsApproved       Card[]          @relation("CardApprover")
-  cardsDismissed      Card[]          @relation("CardDismisser")
-  cardsAgainst        Card[]          @relation("CardSubject")
-  uploadedFiles       ContextFile[]   @relation("FileUploader")
+
   ownedGroups         Group[]         @relation("GroupOwner")
   groupMemberships    GroupMember[]
+  projectMemberships  ProjectMember[]
+  uploadedFiles       ContextFile[]   @relation("FileUploader")
+  uploadedTranscripts Transcript[]    @relation("TranscriptUploader")
+  assignedTasks       Task[]          @relation("TaskAssignee")
+  cardsAgainst        Card[]          @relation("CardSubject")
+  cardsApproved       Card[]          @relation("CardApprover")
+  cardsDismissed      Card[]          @relation("CardDismisser")
+  invitesSent         ProjectInvite[] @relation("InviteSender")
   memberReports       MemberReport[]
   notifications       Notification[]
-  invitesSent         ProjectInvite[] @relation("InviteSender")
-  projectMemberships  ProjectMember[]
-  assignedTasks       Task[]          @relation("TaskAssignee")
-  uploadedTranscripts Transcript[]    @relation("TranscriptUploader")
 
   @@index([clerkUserId])
   @@index([email])
 }
 
 model Group {
-  id        String        @id @default(cuid())
+  id        String   @id @default(cuid())
   name      String
   ownerId   String
-  createdAt DateTime      @default(now())
-  updatedAt DateTime      @updatedAt
-  owner     User          @relation("GroupOwner", fields: [ownerId], references: [id])
-  members   GroupMember[]
-  projects  Project[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  owner    User          @relation("GroupOwner", fields: [ownerId], references: [id])
+  members  GroupMember[]
+  projects Project[]
 
   @@index([ownerId])
 }
@@ -110,36 +112,30 @@ model GroupMember {
   role      GroupRole @default(MEMBER)
   joinedAt  DateTime  @default(now())
   updatedAt DateTime  @updatedAt
-  group     Group     @relation(fields: [groupId], references: [id], onDelete: Cascade)
-  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  group Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([groupId, userId])
   @@index([userId])
 }
 
 model Project {
-  id                  String               @id @default(cuid())
-  groupId             String
-  name                String
-  brief               String
-  deadline            DateTime?
-  healthScore         Int                  @default(100)
-  archivedAt          DateTime?
-  deletedAt           DateTime?
-  createdAt           DateTime             @default(now())
-  updatedAt           DateTime             @updatedAt
-  cards               Card[]
-  contextFiles        ContextFile[]
-  contributionEvents  ContributionEvent[]
-  contributionSources ContributionSource[]
-  KnowledgeEntry      KnowledgeEntry[]
-  matchReports        MatchReport[]
-  notifications       Notification[]
+  id          String    @id @default(cuid())
+  groupId     String
+  name        String
+  brief       String    @db.Text
+  deadline    DateTime?
+  healthScore Int       @default(100)
+  archivedAt  DateTime?
+  deletedAt   DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
   group               Group                @relation(fields: [groupId], references: [id], onDelete: Cascade)
-  invites             ProjectInvite[]
   members             ProjectMember[]
-  sourceIdentities    SourceIdentity[]
-  tasks               Task[]
+  invites             ProjectInvite[]
+  contextFiles        ContextFile[]
   transcripts         Transcript[]
   matchReports        MatchReport[]
   tasks               Task[]
@@ -155,17 +151,9 @@ model Project {
 }
 
 model ProjectMember {
-  id                String           @id @default(cuid())
+  id                String      @id @default(cuid())
   projectId         String
   userId            String
-  role              ProjectRole      @default(MEMBER)
-  contributionScore Int              @default(0)
-  joinedAt          DateTime         @default(now())
-  updatedAt         DateTime         @updatedAt
-  project           Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  user              User             @relation(fields: [userId], references: [id], onDelete: Cascade)
-  scoreSnapshots    ScoreSnapshot[]
-  sourceIdentities  SourceIdentity[]
   role              ProjectRole @default(MEMBER)
   contributionScore Int         @default(0)
   joinedAt          DateTime    @default(now())
@@ -182,9 +170,7 @@ model ProjectMember {
 }
 
 // Per-member capability toggles. `capability` is a free-form string
-// so adding new permissions doesn't require a migration. Absence of
-// a row means "default" (enabled for member-toggleable capabilities,
-// owners always get everything regardless of stored values).
+// so adding new permissions doesn't require a migration.
 model MemberCapability {
   id              String   @id @default(cuid())
   projectMemberId String
@@ -208,12 +194,15 @@ model ProjectInvite {
   acceptedAt DateTime?
   expiresAt  DateTime
   createdAt  DateTime  @default(now())
-  inviter    User      @relation("InviteSender", fields: [invitedBy], references: [id])
-  project    Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  inviter User    @relation("InviteSender", fields: [invitedBy], references: [id])
 
   @@index([projectId])
   @@index([email])
 }
+
+// =================== CONTENT: FILES, TRANSCRIPTS ===================
 
 model ContextFile {
   id         String   @id @default(cuid())
@@ -224,29 +213,17 @@ model ContextFile {
   sizeBytes  Int
   uploadedBy String
   createdAt  DateTime @default(now())
-  project    Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  uploader   User     @relation("FileUploader", fields: [uploadedBy], references: [id])
+
+  project  Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  uploader User    @relation("FileUploader", fields: [uploadedBy], references: [id])
 
   @@index([projectId])
 }
 
 model Transcript {
-  id           String           @id @default(cuid())
-  projectId    String
-  uploadedBy   String
-  rawText      String
-  blobUrl      String?
-  source       TranscriptSource
-  createdAt    DateTime         @default(now())
-  matchReports MatchReport[]
-  project      Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  uploader     User             @relation("TranscriptUploader", fields: [uploadedBy], references: [id])
   id         String           @id @default(cuid())
   projectId  String
   uploadedBy String
-  // Optional human-set title and the actual time the meeting occurred
-  // (vs createdAt = upload time). Both nullable so legacy rows keep
-  // working — the page falls back to a date-based label.
   title      String?
   meetingAt  DateTime?
   rawText    String           @db.Text
@@ -261,21 +238,24 @@ model Transcript {
   @@index([projectId])
 }
 
+// =================== ANALYSIS: MATCH REPORTS, MEMBER REPORTS ===================
+
 model MatchReport {
-  id            String            @id @default(cuid())
-  projectId     String
-  transcriptId  String
-  summary       String
-  periodStart   DateTime
-  periodEnd     DateTime
-  status        MatchReportStatus @default(DRAFT)
-  publishedAt   DateTime?
-  createdAt     DateTime          @default(now())
-  updatedAt     DateTime          @updatedAt
-  cards         Card[]
-  project       Project           @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  transcript    Transcript        @relation(fields: [transcriptId], references: [id], onDelete: Cascade)
+  id           String            @id @default(cuid())
+  projectId    String
+  transcriptId String
+  summary      String            @db.Text
+  periodStart  DateTime
+  periodEnd    DateTime
+  status       MatchReportStatus @default(DRAFT)
+  publishedAt  DateTime?
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+
+  project       Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  transcript    Transcript     @relation(fields: [transcriptId], references: [id], onDelete: Cascade)
   memberReports MemberReport[]
+  cards         Card[]
 
   @@index([projectId])
   @@index([transcriptId])
@@ -283,36 +263,40 @@ model MatchReport {
 }
 
 model MemberReport {
-  id                String      @id @default(cuid())
+  id                String   @id @default(cuid())
   matchReportId     String
   userId            String
   contributionScore Int
   speakingTimePct   Float?
   commitmentsJson   Json
-  notes             String?
-  createdAt         DateTime    @default(now())
-  matchReport       MatchReport @relation(fields: [matchReportId], references: [id], onDelete: Cascade)
-  user              User        @relation(fields: [userId], references: [id])
+  notes             String?  @db.Text
+  createdAt         DateTime @default(now())
+
+  matchReport MatchReport @relation(fields: [matchReportId], references: [id], onDelete: Cascade)
+  user        User        @relation(fields: [userId], references: [id])
 
   @@unique([matchReportId, userId])
   @@index([userId])
 }
+
+// =================== WORK: TASKS, CARDS ===================
 
 model Task {
   id            String     @id @default(cuid())
   projectId     String
   assignedTo    String?
   title         String
-  description   String?
+  description   String?    @db.Text
   dueDate       DateTime?
   status        TaskStatus @default(TODO)
   source        TaskSource
   sourceRefJson Json?
-  sourceQuote   String?
+  sourceQuote   String?    @db.Text
   createdAt     DateTime   @default(now())
   updatedAt     DateTime   @updatedAt
-  assignee      User?      @relation("TaskAssignee", fields: [assignedTo], references: [id])
-  project       Project    @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  project  Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  assignee User?   @relation("TaskAssignee", fields: [assignedTo], references: [id])
 
   @@index([projectId])
   @@index([assignedTo])
@@ -320,31 +304,34 @@ model Task {
 }
 
 model Card {
-  id            String       @id @default(cuid())
+  id            String     @id @default(cuid())
   projectId     String
   userId        String
   cardType      CardType
-  reason        String
+  reason        String     @db.Text
   evidenceJson  Json?
-  status        CardStatus   @default(DRAFT)
-  aiGenerated   Boolean      @default(true)
+  status        CardStatus @default(DRAFT)
+  aiGenerated   Boolean    @default(true)
   approvedBy    String?
   approvedAt    DateTime?
   dismissedBy   String?
   dismissedAt   DateTime?
   matchReportId String?
-  createdAt     DateTime     @default(now())
-  updatedAt     DateTime     @updatedAt
-  approver      User?        @relation("CardApprover", fields: [approvedBy], references: [id])
-  dismisser     User?        @relation("CardDismisser", fields: [dismissedBy], references: [id])
-  matchReport   MatchReport? @relation(fields: [matchReportId], references: [id])
-  project       Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  user          User         @relation("CardSubject", fields: [userId], references: [id])
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  project     Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user        User         @relation("CardSubject", fields: [userId], references: [id])
+  approver    User?        @relation("CardApprover", fields: [approvedBy], references: [id])
+  dismisser   User?        @relation("CardDismisser", fields: [dismissedBy], references: [id])
+  matchReport MatchReport? @relation(fields: [matchReportId], references: [id])
 
   @@index([projectId])
   @@index([userId])
   @@index([status])
 }
+
+// =================== CONTRIBUTION PIPELINE ===================
 
 model ContributionSource {
   id           String                 @id @default(cuid())
@@ -355,8 +342,9 @@ model ContributionSource {
   lastSyncedAt DateTime?
   createdAt    DateTime               @default(now())
   updatedAt    DateTime               @updatedAt
-  events       ContributionEvent[]
-  project      Project                @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  project Project             @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  events  ContributionEvent[]
 
   @@unique([projectId, sourceType])
   @@index([projectId])
@@ -375,8 +363,9 @@ model ContributionEvent {
   weight      Float                  @default(1.0)
   occurredAt  DateTime
   createdAt   DateTime               @default(now())
-  project     Project                @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  source      ContributionSource     @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+
+  project Project            @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  source  ContributionSource @relation(fields: [sourceId], references: [id], onDelete: Cascade)
 
   @@unique([sourceId, externalId])
   @@index([projectId])
@@ -393,8 +382,9 @@ model SourceIdentity {
   verified        Boolean                @default(false)
   createdAt       DateTime               @default(now())
   updatedAt       DateTime               @updatedAt
-  project         Project                @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  projectMember   ProjectMember          @relation(fields: [projectMemberId], references: [id], onDelete: Cascade)
+
+  project       Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  projectMember ProjectMember @relation(fields: [projectMemberId], references: [id], onDelete: Cascade)
 
   @@unique([projectMemberId, sourceType])
   @@unique([projectId, sourceType, externalId])
@@ -402,12 +392,13 @@ model SourceIdentity {
 }
 
 model ScoreSnapshot {
-  id              String        @id @default(cuid())
+  id              String   @id @default(cuid())
   projectMemberId String
   score           Int
-  reason          String
-  computedAt      DateTime      @default(now())
-  projectMember   ProjectMember @relation(fields: [projectMemberId], references: [id], onDelete: Cascade)
+  reason          String   @db.Text
+  computedAt      DateTime @default(now())
+
+  projectMember ProjectMember @relation(fields: [projectMemberId], references: [id], onDelete: Cascade)
 
   @@index([projectMemberId])
   @@index([computedAt])
@@ -415,10 +406,6 @@ model ScoreSnapshot {
 
 // =================== KNOWLEDGE BASE ===================
 
-// KB grows automatically from transcripts, GitHub, Jira (future), and
-// manual entries. `source` is intentionally a free-form string so new
-// providers can be added without a schema migration — values in use
-// today: "transcript", "github", "jira", "manual".
 model KnowledgeEntry {
   id              String    @id @default(cuid())
   projectId       String
@@ -427,24 +414,18 @@ model KnowledgeEntry {
   sourceTypeLabel String?
   title           String
   content         String    @db.Text
-  // Accountability context extracted from transcripts. Both nullable
-  // because not every entry has an owner or due date — GitHub commits
-  // and free-form notes typically won't.
   assignedTo      String?
   targetDate      DateTime?
   createdAt       DateTime  @default(now())
 
   project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
-  // Idempotency for sync sources: one entry per (project, source,
-  // external ref). Manual entries pass null sourceRefId, which is not
-  // constrained by this index in Postgres.
   @@unique([projectId, source, sourceRefId])
   @@index([projectId, createdAt])
   @@index([projectId, source])
 }
 
-// =================== NOTIFICATIONS (stub) ===================
+// =================== NOTIFICATIONS ===================
 
 model Notification {
   id        String    @id @default(cuid())
@@ -452,84 +433,15 @@ model Notification {
   projectId String?
   type      String
   title     String
-  body      String
+  body      String    @db.Text
   linkUrl   String?
   readAt    DateTime?
   createdAt DateTime  @default(now())
-  project   Project?  @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
   @@index([userId, readAt])
   @@index([projectId])
   @@index([createdAt])
-}
-
-model KnowledgeEntry {
-  id              String   @id
-  projectId       String
-  source          String
-  sourceRefId     String?
-  sourceTypeLabel String?
-  title           String
-  content         String
-  createdAt       DateTime @default(now())
-  Project         Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
-
-  @@unique([projectId, source, sourceRefId])
-  @@index([projectId, createdAt])
-  @@index([projectId, source])
-}
-
-enum GroupRole {
-  OWNER
-  MEMBER
-}
-
-enum ProjectRole {
-  OWNER
-  MEMBER
-}
-
-enum TranscriptSource {
-  PASTE
-  FILE
-}
-
-enum MatchReportStatus {
-  DRAFT
-  PUBLISHED
-}
-
-enum TaskStatus {
-  TODO
-  IN_PROGRESS
-  DONE
-  BLOCKED
-  CANCELLED
-}
-
-enum TaskSource {
-  MANUAL
-  TRANSCRIPT
-  GITHUB
-  JIRA
-}
-
-enum CardType {
-  YELLOW
-  RED
-  MVP
-}
-
-enum CardStatus {
-  DRAFT
-  APPROVED
-  DISMISSED
-}
-
-enum ContributionSourceType {
-  GITHUB
-  TRANSCRIPT
-  MANUAL
-  JIRA
 }
