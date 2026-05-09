@@ -408,16 +408,18 @@ export function LandingClient({ isSignedIn }: Props) {
         </nav>
       </header>
 
-      <ScoreTicker />
-
       {/* ============== HERO ============== */}
       <section
-        className="hero wrap"
+        className="hero"
         style={{
           paddingTop: 80,
           paddingBottom: 140,
+          paddingLeft: 32,
+          paddingRight: 32,
           position: "relative",
           overflow: "hidden",
+          width: "100%",
+          maxWidth: "100%",
         }}
       >
         <ScoreboardBackground />
@@ -575,7 +577,7 @@ export function LandingClient({ isSignedIn }: Props) {
         </div>
       </section>
 
-      <SectionDivider />
+      <ScoreTicker />
 
       {/* ============== PROBLEM ============== */}
       <section
