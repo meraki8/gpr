@@ -202,11 +202,53 @@ export async function getProjectSources(projectId: string, page = 1) {
   const hasNextPage = project.contributionEvents.length > EVENTS_PER_PAGE;
   const contributionEvents = project.contributionEvents.slice(0, EVENTS_PER_PAGE);
 
+  // Pull ALL GitHub events with a mapped userId to build the leaderboard —
+  // independent of pagination so the leaderboard always shows totals.
+  const allGithubEvents = await db.contributionEvent.findMany({
+    where: { projectId, sourceType: "GITHUB", userId: { not: null } },
+    select: { userId: true, weight: true, eventType: true },
+  });
+
+  type MemberStats = { commits: number; prs: number; totalWeight: number };
+  const statsByUser = new Map<string, MemberStats>();
+  for (const ev of allGithubEvents) {
+    if (!ev.userId) continue;
+    const existing = statsByUser.get(ev.userId) ?? { commits: 0, prs: 0, totalWeight: 0 };
+    const isPr = ev.eventType.startsWith("pr_");
+    statsByUser.set(ev.userId, {
+      commits: existing.commits + (isPr ? 0 : 1),
+      prs: existing.prs + (isPr ? 1 : 0),
+      totalWeight: existing.totalWeight + ev.weight,
+    });
+  }
+
+  const maxWeight = statsByUser.size > 0
+    ? Math.max(...[...statsByUser.values()].map((s) => s.totalWeight))
+    : 1;
+
+  const githubLeaderboard = project.members
+    .map((m) => {
+      const identity = m.sourceIdentities.find((si) => si.sourceType === "GITHUB");
+      const stats = statsByUser.get(m.user.id);
+      return {
+        memberId: m.id,
+        userId: m.user.id,
+        name: m.user.name ?? m.user.email,
+        githubLogin: identity?.externalId ?? null,
+        commits: stats?.commits ?? 0,
+        prs: stats?.prs ?? 0,
+        totalWeight: stats?.totalWeight ?? 0,
+        score: stats ? Math.round((stats.totalWeight / maxWeight) * 100) : 0,
+      };
+    })
+    .sort((a, b) => b.score - a.score);
+
   return {
     project: { ...project, contributionEvents },
     isOwner: member.role === "OWNER",
     page,
     hasNextPage,
+    githubLeaderboard,
   };
 }
 
