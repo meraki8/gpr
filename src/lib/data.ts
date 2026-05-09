@@ -123,6 +123,300 @@ export async function getGroup(groupId: string) {
   return group;
 }
 
+// Powers the redesigned project overview / command-centre page.
+// Bundles header counts, leaderboard top-3, the latest match report
+// with its top scorers, a unified recent-activity timeline, and the
+// open-commitment list in a single round-trip.
+export async function getProjectOverview(projectId: string) {
+  const user = await requireDbUser();
+
+  const project = await db.project.findFirst({
+    where: {
+      id: projectId,
+      deletedAt: null,
+      members: { some: { userId: user.id } },
+    },
+    include: {
+      group: { select: { id: true, name: true } },
+      members: {
+        orderBy: [
+          { contributionScore: "desc" },
+          { joinedAt: "asc" },
+        ],
+        include: { user: true },
+      },
+    },
+  });
+  if (!project) notFound();
+
+  const isOwner = project.members.some(
+    (m) => m.userId === user.id && m.role === "OWNER",
+  );
+
+  const ACTIVITY_LOOKBACK = 30;
+  const TIMELINE_SIZE = 8;
+
+  const [
+    meetingsCount,
+    cardsCount,
+    kbCount,
+    latestReport,
+    recentTranscripts,
+    recentCards,
+    recentKb,
+    recentJoins,
+    recentEvents,
+    recentReports,
+    openCommitments,
+    allCardsForCounts,
+  ] = await Promise.all([
+    db.matchReport.count({ where: { projectId } }),
+    db.card.count({ where: { projectId } }),
+    db.knowledgeEntry.count({ where: { projectId } }),
+    db.matchReport.findFirst({
+      where: { projectId },
+      orderBy: { createdAt: "desc" },
+      include: {
+        memberReports: {
+          orderBy: { contributionScore: "desc" },
+          take: 3,
+          include: { user: true },
+        },
+        cards: { include: { user: true } },
+      },
+    }),
+    db.transcript.findMany({
+      where: { projectId },
+      orderBy: { createdAt: "desc" },
+      take: ACTIVITY_LOOKBACK,
+      include: { uploader: { select: { name: true, email: true } } },
+    }),
+    db.card.findMany({
+      where: { projectId },
+      orderBy: { createdAt: "desc" },
+      take: ACTIVITY_LOOKBACK,
+      include: { user: { select: { name: true, email: true } } },
+    }),
+    db.knowledgeEntry.findMany({
+      where: { projectId, source: { not: "transcript" } },
+      orderBy: { createdAt: "desc" },
+      take: ACTIVITY_LOOKBACK,
+    }),
+    db.projectMember.findMany({
+      where: { projectId },
+      orderBy: { joinedAt: "desc" },
+      take: ACTIVITY_LOOKBACK,
+      include: { user: { select: { name: true, email: true } } },
+    }),
+    db.contributionEvent.findMany({
+      where: { projectId, sourceType: "GITHUB" },
+      orderBy: { occurredAt: "desc" },
+      take: ACTIVITY_LOOKBACK,
+    }),
+    db.matchReport.findMany({
+      where: { projectId },
+      orderBy: { createdAt: "desc" },
+      take: ACTIVITY_LOOKBACK,
+    }),
+    db.knowledgeEntry.findMany({
+      where: {
+        projectId,
+        source: "transcript",
+        assignedTo: { not: null },
+        targetDate: { not: null },
+      },
+      orderBy: { targetDate: "asc" },
+      take: 12,
+    }),
+    db.card.findMany({
+      where: { projectId },
+      select: { userId: true, cardType: true },
+    }),
+  ]);
+
+  const cardCountsByUser = new Map<
+    string,
+    { mvp: number; y: number; r: number }
+  >();
+  for (const c of allCardsForCounts) {
+    const bucket = cardCountsByUser.get(c.userId) ?? {
+      mvp: 0,
+      y: 0,
+      r: 0,
+    };
+    if (c.cardType === "MVP") bucket.mvp += 1;
+    else if (c.cardType === "YELLOW") bucket.y += 1;
+    else if (c.cardType === "RED") bucket.r += 1;
+    cardCountsByUser.set(c.userId, bucket);
+  }
+
+  type Activity = {
+    key: string;
+    at: Date;
+    kind:
+      | "transcript"
+      | "card"
+      | "kb"
+      | "join"
+      | "github"
+      | "report";
+    actor: string | null;
+    title: string;
+    detail?: string;
+  };
+
+  const activities: Activity[] = [];
+
+  for (const t of recentTranscripts) {
+    activities.push({
+      key: `t-${t.id}`,
+      at: t.createdAt,
+      kind: "transcript",
+      actor:
+        t.uploader.name ?? t.uploader.email.split("@")[0] ?? "someone",
+      title: t.title ?? "Transcript uploaded",
+    });
+  }
+  for (const c of recentCards) {
+    activities.push({
+      key: `c-${c.id}`,
+      at: c.createdAt,
+      kind: "card",
+      actor: c.user.name ?? c.user.email.split("@")[0] ?? "member",
+      title: `${c.cardType.toLowerCase()} card issued`,
+      detail: c.reason,
+    });
+  }
+  for (const k of recentKb) {
+    activities.push({
+      key: `k-${k.id}`,
+      at: k.createdAt,
+      kind: "kb",
+      actor: null,
+      title: k.title,
+      detail: k.sourceTypeLabel ?? k.source,
+    });
+  }
+  for (const m of recentJoins) {
+    activities.push({
+      key: `j-${m.id}`,
+      at: m.joinedAt,
+      kind: "join",
+      actor: m.user.name ?? m.user.email.split("@")[0],
+      title: `joined the project`,
+    });
+  }
+  // Group GitHub commits by day so a sync of 50 commits doesn't drown
+  // the feed. PRs stay individual since they're rarer.
+  const commitBuckets = new Map<
+    string,
+    { at: Date; count: number; login: string | null }
+  >();
+  for (const e of recentEvents) {
+    const payload = e.payloadJson as {
+      login?: string;
+      title?: string;
+      url?: string;
+    };
+    if (e.eventType === "commit") {
+      const day = e.occurredAt.toISOString().slice(0, 10);
+      const bucket = commitBuckets.get(day) ?? {
+        at: e.occurredAt,
+        count: 0,
+        login: payload.login ?? null,
+      };
+      bucket.count += 1;
+      if (e.occurredAt > bucket.at) bucket.at = e.occurredAt;
+      commitBuckets.set(day, bucket);
+    } else {
+      activities.push({
+        key: `g-${e.id}`,
+        at: e.occurredAt,
+        kind: "github",
+        actor: payload.login ?? null,
+        title: payload.title ?? e.eventType.replace(/_/g, " "),
+      });
+    }
+  }
+  for (const [day, b] of commitBuckets) {
+    activities.push({
+      key: `gc-${day}`,
+      at: b.at,
+      kind: "github",
+      actor: b.login,
+      title: `${b.count} commit${b.count === 1 ? "" : "s"} pushed`,
+    });
+  }
+  for (const r of recentReports) {
+    activities.push({
+      key: `r-${r.id}`,
+      at: r.createdAt,
+      kind: "report",
+      actor: null,
+      title: "Match report published",
+    });
+  }
+
+  activities.sort((a, b) => b.at.getTime() - a.at.getTime());
+  const timeline = activities.slice(0, TIMELINE_SIZE);
+
+  // Resolve open-commitment assignees — assignedTo is a free-form
+  // string (usually a name from the transcript), so we best-effort
+  // match against project members for an avatar.
+  const memberByName = new Map<
+    string,
+    { id: string; name: string | null; email: string; avatarUrl: string | null }
+  >();
+  for (const m of project.members) {
+    const lc = (m.user.name ?? m.user.email).toLowerCase();
+    memberByName.set(lc, {
+      id: m.user.id,
+      name: m.user.name,
+      email: m.user.email,
+      avatarUrl: m.user.avatarUrl,
+    });
+    // also key by first name token
+    const first = lc.split(/[\s@]/)[0];
+    if (first && !memberByName.has(first)) {
+      memberByName.set(first, {
+        id: m.user.id,
+        name: m.user.name,
+        email: m.user.email,
+        avatarUrl: m.user.avatarUrl,
+      });
+    }
+  }
+  const commitments = openCommitments.map((c) => {
+    const key = (c.assignedTo ?? "").toLowerCase().trim();
+    const matched =
+      memberByName.get(key) ??
+      memberByName.get(key.split(/\s+/)[0] ?? "") ??
+      null;
+    return {
+      id: c.id,
+      title: c.title,
+      assignedTo: c.assignedTo,
+      assignee: matched,
+      targetDate: c.targetDate as Date,
+    };
+  });
+
+  return {
+    project,
+    isOwner,
+    counts: {
+      members: project.members.length,
+      meetings: meetingsCount,
+      cards: cardsCount,
+      kb: kbCount,
+    },
+    latestReport,
+    timeline,
+    commitments,
+    cardCountsByUser,
+  };
+}
+
 export async function getProject(projectId: string) {
   const user = await requireDbUser();
   const project = await db.project.findFirst({
