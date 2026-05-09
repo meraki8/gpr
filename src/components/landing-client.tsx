@@ -1029,26 +1029,26 @@ export function LandingClient({ isSignedIn }: Props) {
               </div>
               <div className="ix">02</div>
             </div>
-            <div className="cap reveal">
+            <div className="cap">
               <h3>Leaderboard</h3>
               <p>
                 Who is carrying the squad. Updated after every meeting.
               </p>
               <div className="ix">03</div>
             </div>
-            <div className="cap red-cap reveal">
+            <div className="cap red-cap">
               <h3>Ask GPR anything</h3>
               <p>It only knows what your team has done.</p>
               <div className="ix" style={{ color: "rgba(255,255,255,0.7)" }}>
                 04
               </div>
             </div>
-            <div className="cap reveal">
+            <div className="cap">
               <h3>GitHub integration</h3>
               <p>Commits don&rsquo;t lie. Neither does GPR.</p>
               <div className="ix">05</div>
             </div>
-            <div className="cap reveal">
+            <div className="cap">
               <h3>Multi-source</h3>
               <p>
                 Transcripts, GitHub, Jira, Slack. Every angle covered.
