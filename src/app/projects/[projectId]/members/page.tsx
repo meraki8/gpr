@@ -6,7 +6,7 @@ import { PageHead } from "@/components/page-head";
 import { Score } from "@/components/score";
 import { ResendInviteButton } from "@/components/resend-invite-button";
 import { requireDbUser } from "@/lib/auth";
-import { getNavContext, getProjectMembers } from "@/lib/data";
+import { checkContractGate, getNavContext, getProjectMembers } from "@/lib/data";
 import { InviteForm } from "@/components/invite-form";
 import { cancelInvite } from "../actions";
 
@@ -16,6 +16,7 @@ export default async function MembersPage({
   params: Promise<{ projectId: string }>;
 }) {
   const { projectId } = await params;
+  await checkContractGate(projectId);
   const [user, nav, project] = await Promise.all([
     requireDbUser(),
     getNavContext({ projectId }),

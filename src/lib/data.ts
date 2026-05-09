@@ -6,6 +6,16 @@ import { computeProjectHealth } from "./health";
 
 export async function checkContractGate(projectId: string) {
   const user = await requireDbUser();
+
+  // Owners are never blocked — they may need to generate the contract first.
+  const membership = await db.projectMember.findUnique({
+    where: { projectId_userId: { projectId, userId: user.id } },
+    select: { role: true },
+  });
+  if (!membership || membership.role === "OWNER") return;
+
+  // For non-owner members: require a signed contract.
+  // Redirect if no contract has been generated yet, OR if they haven't signed.
   const contract = await db.contract.findUnique({
     where: { projectId },
     select: {
@@ -13,7 +23,7 @@ export async function checkContractGate(projectId: string) {
       signatures: { where: { userId: user.id }, select: { id: true } },
     },
   });
-  if (contract && contract.signatures.length === 0) {
+  if (!contract || contract.signatures.length === 0) {
     redirect(`/projects/${projectId}/contract`);
   }
 }

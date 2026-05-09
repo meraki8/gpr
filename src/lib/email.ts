@@ -1,5 +1,6 @@
 import "server-only";
 import { Resend } from "resend";
+import { getBaseUrl } from "./url";
 
 const resend = new Resend(process.env.RESEND_API_KEY);
 
@@ -117,6 +118,59 @@ function renderInviteHtml({
     </p>
     <p style="font-size:13px;color:#777;margin:32px 0 0;line-height:1.5;">
       This link expires in 7 days. GPR keeps receipts so your team knows who&rsquo;s pulling their weight.
+    </p>
+  </div>
+</body></html>`;
+}
+
+export async function sendContractFullySignedEmail({
+  projectName,
+  projectId,
+  members,
+}: {
+  projectName: string;
+  projectId: string;
+  members: { name: string; email: string }[];
+}) {
+  const contractUrl = `${getBaseUrl()}/projects/${projectId}/contract`;
+  await Promise.allSettled(
+    members.map((m) =>
+      resend.emails.send({
+        from: FROM,
+        to: [m.email],
+        subject: `Contract fully signed — ${projectName}`,
+        html: renderContractSignedHtml({ memberName: m.name, projectName, contractUrl }),
+      }),
+    ),
+  );
+}
+
+function renderContractSignedHtml({
+  memberName,
+  projectName,
+  contractUrl,
+}: {
+  memberName: string;
+  projectName: string;
+  contractUrl: string;
+}) {
+  return `<!DOCTYPE html>
+<html><body style="margin:0;padding:0;background:#fafafa;">
+  <div style="font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif;max-width:560px;margin:0 auto;padding:32px 24px;color:#111;">
+    <div style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;letter-spacing:0.3em;color:#DC2626;text-transform:uppercase;margin-bottom:24px;">
+      GPR — Group Project Referee
+    </div>
+    <h1 style="font-size:24px;margin:0 0 8px;line-height:1.2;">Contract fully executed.</h1>
+    <p style="font-size:15px;line-height:1.55;margin:0 0 24px;color:#333;">
+      Hi ${escapeHtml(memberName)}, every member of <strong>${escapeHtml(projectName)}</strong> has now signed the group contract. The ref has it on record.
+    </p>
+    <p style="margin:32px 0;">
+      <a href="${contractUrl}" style="display:inline-block;background:#DC2626;color:#fff;padding:12px 28px;text-decoration:none;font-weight:500;font-size:15px;">
+        View contract
+      </a>
+    </p>
+    <p style="font-size:13px;color:#777;margin:32px 0 0;line-height:1.5;">
+      GPR keeps receipts. All signatures are timestamped and the PDF is available to download from the link above.
     </p>
   </div>
 </body></html>`;

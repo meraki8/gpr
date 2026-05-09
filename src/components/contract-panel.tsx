@@ -28,18 +28,25 @@ export function ContractPanel({
   members,
   isOwner,
   hasSigned,
+  currentUserId,
+  currentUserName,
+  currentUserEmail,
 }: {
   projectId: string;
   contract: Contract | null;
   members: Member[];
   isOwner: boolean;
   hasSigned: boolean;
+  currentUserId: string;
+  currentUserName: string | null;
+  currentUserEmail: string;
 }) {
   const [isEditing, setIsEditing] = useState(false);
   const [editContent, setEditContent] = useState(contract?.content ?? "");
   const [typedName, setTypedName] = useState("");
   const [signed, setSigned] = useState(hasSigned);
   const [error, setError] = useState<string | null>(null);
+  const [signError, setSignError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
 
   function handleGenerate() {
@@ -71,14 +78,14 @@ export function ContractPanel({
   }
 
   function handleSign() {
-    setError(null);
+    setSignError(null);
     startTransition(async () => {
       try {
         await signContract(projectId, typedName);
         setSigned(true);
         setTypedName("");
       } catch (e) {
-        setError(e instanceof Error ? e.message : "Failed to sign contract");
+        setSignError(e instanceof Error ? e.message : "Failed to sign contract");
       }
     });
   }
@@ -111,7 +118,11 @@ export function ContractPanel({
           >
             {isPending ? "Generating…" : "Generate Contract"}
           </button>
-        ) : null
+        ) : (
+          <p className="mute-ink" style={{ fontSize: 14, margin: 0 }}>
+            The project owner hasn&rsquo;t generated a contract yet. You&rsquo;ll be able to access the project once one is created and you&rsquo;ve signed it.
+          </p>
+        )
       ) : (
         <>
           {/* Contract text */}
@@ -280,7 +291,11 @@ export function ContractPanel({
                 className="mute-ink"
                 style={{ fontSize: 13, marginBottom: 24, margin: "8px 0 24px" }}
               >
-                Type your full name to confirm you have read and agree to the terms.
+                Type{" "}
+                <strong style={{ color: "var(--ink)" }}>
+                  {currentUserName ?? currentUserEmail}
+                </strong>{" "}
+                exactly to confirm you have read and agree to the terms.
               </p>
               <div style={{ display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap" }}>
                 <div style={{ flex: 1, minWidth: 220 }}>
@@ -295,13 +310,17 @@ export function ContractPanel({
                     id="typed-name"
                     type="text"
                     value={typedName}
-                    onChange={(e) => setTypedName(e.target.value)}
-                    placeholder="Type your name exactly"
+                    onChange={(e) => {
+                      setTypedName(e.target.value);
+                      if (signError) setSignError(null);
+                    }}
+                    placeholder={currentUserName ?? currentUserEmail}
                     className="field"
                     style={{
                       fontFamily: "Georgia, serif",
                       fontStyle: "italic",
                       fontSize: 15,
+                      borderColor: signError ? "var(--red)" : undefined,
                     }}
                     onKeyDown={(e) => {
                       if (e.key === "Enter" && typedName.trim()) handleSign();
@@ -317,6 +336,19 @@ export function ContractPanel({
                   {isPending ? "Signing…" : "I agree — sign contract"}
                 </button>
               </div>
+              {signError && (
+                <p
+                  role="alert"
+                  style={{
+                    marginTop: 12,
+                    marginBottom: 0,
+                    fontSize: 13,
+                    color: "var(--red)",
+                  }}
+                >
+                  {signError}
+                </p>
+              )}
             </section>
           ) : (
             <section
