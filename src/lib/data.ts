@@ -484,10 +484,12 @@ export async function getMatchReport(reportId: string) {
 
   const isOwner = report.project.members[0]?.role === "OWNER";
 
-  // Draft reports are owner-only.
-  if (report.status === "DRAFT" && !isOwner) notFound();
-
-  // Non-owners only see approved cards.
+  // Members can view draft reports — the analysis was opened up to
+  // anyone with the run_analysis capability, and 404'ing the runner
+  // immediately after a successful run was the bug. Non-owners
+  // still only see approved cards (drafts of cards stay owner-only),
+  // and the report page hides approve/dismiss/publish actions for
+  // non-owners.
   const visibleCards = isOwner
     ? report.cards
     : report.cards.filter((c) => c.status === "APPROVED");
