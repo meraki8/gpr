@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import { db } from "./db";
 import { requireDbUser } from "./auth";
 import { CAPABILITIES, resolveCapability } from "./capabilities";
+import { computeProjectHealth } from "./health";
 
 export async function getMyGroups() {
   const user = await requireDbUser();
@@ -401,6 +402,8 @@ export async function getProjectOverview(projectId: string) {
     };
   });
 
+  const health = await computeProjectHealth(projectId);
+
   return {
     project,
     isOwner,
@@ -410,6 +413,8 @@ export async function getProjectOverview(projectId: string) {
       cards: cardsCount,
       kb: kbCount,
     },
+    healthScore: health.score,
+    healthBreakdown: health,
     latestReport,
     timeline,
     commitments,
@@ -1032,13 +1037,8 @@ export async function getProjectLeaderboard(projectId: string) {
   const totalMeetings = await db.matchReport.count({
     where: { projectId },
   });
-  const healthScore =
-    enrichedMembers.length === 0
-      ? 0
-      : Math.round(
-          enrichedMembers.reduce((s, m) => s + m.contributionScore, 0) /
-            enrichedMembers.length,
-        );
+  const health = await computeProjectHealth(projectId);
+  const healthScore = health.score;
   const mostImproved =
     enrichedMembers
       .filter((m) => m.weekDelta > 0)

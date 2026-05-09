@@ -38,6 +38,7 @@ export default async function ProjectPage({
     project,
     isOwner,
     counts,
+    healthScore,
     latestReport,
     timeline,
     commitments,
@@ -65,6 +66,7 @@ export default async function ProjectPage({
         <ProjectHeader
           project={project}
           counts={counts}
+          healthScore={healthScore}
           isOwner={isOwner}
         />
 
@@ -121,16 +123,18 @@ export default async function ProjectPage({
 function ProjectHeader({
   project,
   counts,
+  healthScore,
   isOwner,
 }: {
   project: Overview["project"];
   counts: Overview["counts"];
+  healthScore: number;
   isOwner: boolean;
 }) {
   const healthColor =
-    project.healthScore >= 80
+    healthScore >= 80
       ? "var(--status-good, #16a34a)"
-      : project.healthScore >= 50
+      : healthScore >= 50
         ? "var(--status-watch, #d97706)"
         : "var(--red)";
   return (
@@ -199,14 +203,14 @@ function ProjectHeader({
           <div className="label" style={{ marginBottom: 12 }}>
             Project health
           </div>
-          <Score value={project.healthScore} size={84} color={healthColor} />
+          <Score value={healthScore} size={84} color={healthColor} />
           <div
             className="mute-ink"
             style={{ fontSize: 12, marginTop: 12, lineHeight: 1.45 }}
           >
-            {project.healthScore >= 80
+            {healthScore >= 80
               ? "Squad's pulling. Keep it up."
-              : project.healthScore >= 50
+              : healthScore >= 50
                 ? "Mixed signals. Time for a stand-up."
                 : "Red zone. Someone needs to step up."}
           </div>
