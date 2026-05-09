@@ -79,6 +79,49 @@ export async function inviteMember(formData: FormData) {
   revalidatePath(`/projects/${projectId}`);
 }
 
+const ResendInviteSchema = z.object({
+  inviteId: z.string().min(1),
+});
+
+export async function resendInvite(inviteId: string) {
+  const user = await requireDbUser();
+
+  const parsed = ResendInviteSchema.safeParse({ inviteId });
+  if (!parsed.success) throw new Error("Invalid input");
+
+  const invite = await db.projectInvite.findFirst({
+    where: {
+      id: parsed.data.inviteId,
+      project: {
+        deletedAt: null,
+        members: { some: { userId: user.id } },
+      },
+    },
+    include: { project: true },
+  });
+  if (!invite) throw new Error("FORBIDDEN");
+  if (invite.acceptedAt) throw new Error("Invite already accepted");
+
+  // Reset the 7-day expiry from now; reuse the existing token so any
+  // already-sent link still works.
+  const newExpiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+  await db.projectInvite.update({
+    where: { id: invite.id },
+    data: { expiresAt: newExpiresAt },
+  });
+
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
+  await sendInviteEmail({
+    to: invite.email,
+    inviterName: user.name ?? user.email,
+    projectName: invite.project.name,
+    projectBrief: invite.project.brief,
+    inviteUrl: `${appUrl}/invite/${invite.token}`,
+  });
+
+  revalidatePath(`/projects/${invite.projectId}`);
+}
+
 const TranscriptSchema = z.object({
   projectId: z.string().min(1),
   rawText: z

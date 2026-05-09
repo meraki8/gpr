@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { AppHeader } from "@/components/app-header";
+import { ResendInviteButton } from "@/components/resend-invite-button";
 import { requireDbUser } from "@/lib/auth";
 import { getProject } from "@/lib/data";
 import { analyzeTranscript, inviteMember } from "./actions";
@@ -169,7 +170,7 @@ export default async function ProjectPage({
                   return (
                     <li
                       key={inv.id}
-                      className="flex items-baseline justify-between gap-3 border border-white/10 px-3 py-2 text-sm"
+                      className="flex items-center justify-between gap-3 border border-white/10 px-3 py-2 text-sm"
                     >
                       <div className="min-w-0 flex-1">
                         <span className="text-white/40 font-mono text-xs">
@@ -180,6 +181,7 @@ export default async function ProjectPage({
                       <span className="text-xs font-mono text-white/40 shrink-0">
                         {daysLeft} day{daysLeft === 1 ? "" : "s"} left
                       </span>
+                      <ResendInviteButton inviteId={inv.id} />
                     </li>
                   );
                 })}
