@@ -59,8 +59,24 @@ export async function inviteMember(formData: FormData) {
       },
     });
     if (alreadyMember) {
-      throw new Error("That email is already a project member");
+      throw new Error("That person is already a member of this project");
     }
+  }
+
+  // Block re-inviting an email that already accepted a previous invite.
+  const acceptedInvite = await db.projectInvite.findFirst({
+    where: { projectId, email, acceptedAt: { not: null } },
+  });
+  if (acceptedInvite) {
+    throw new Error("That person has already accepted an invite to this project");
+  }
+
+  // Block duplicate pending invites for the same email.
+  const pendingInvite = await db.projectInvite.findFirst({
+    where: { projectId, email, acceptedAt: null, expiresAt: { gt: new Date() } },
+  });
+  if (pendingInvite) {
+    throw new Error("An invite is already pending for that email");
   }
 
   const token = randomBytes(32).toString("base64url");
