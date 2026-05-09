@@ -40,15 +40,6 @@ export function NudgeButton({
     return () => window.removeEventListener("keydown", onKey);
   }, [open]);
 
-  useEffect(() => {
-    if (open) {
-      // Reset to a fresh draft based on the latest props each time
-      // the modal re-opens (in case the score changed).
-      setMessage(defaultMessage(recipientName, recipientScore));
-      setStatus({ kind: "idle" });
-    }
-  }, [open, recipientName, recipientScore]);
-
   const onSend = () => {
     startTransition(async () => {
       const res = await nudgeMember({
@@ -78,6 +69,8 @@ export function NudgeButton({
           // (e.g. on the members page).
           e.preventDefault();
           e.stopPropagation();
+          setMessage(defaultMessage(recipientName, recipientScore));
+          setStatus({ kind: "idle" });
           setOpen(true);
         }}
         className="row-hover"

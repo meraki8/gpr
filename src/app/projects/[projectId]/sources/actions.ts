@@ -5,10 +5,8 @@ import { z } from "zod";
 import { revalidatePath } from "next/cache";
 import { requireDbUser } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { fetchCommits, fetchPullRequests } from "@/lib/github";
+import { syncGithubProject } from "@/lib/github-sync";
 import { syncJiraProject } from "@/lib/jira-sync";
-import { KB_SOURCES, addKnowledgeEntries } from "@/lib/kb";
-import { recomputeMemberScores } from "@/lib/scoring";
 
 async function requireOwner(projectId: string, userId: string) {
   const member = await db.projectMember.findFirst({
@@ -16,6 +14,14 @@ async function requireOwner(projectId: string, userId: string) {
   });
   if (!member) throw new Error("FORBIDDEN");
 }
+
+type GithubConfig = {
+  repos?: string[];
+  accessToken?: string;
+  token?: string;
+  lastSyncError?: string | null;
+  lastSyncOkAt?: string | null;
+};
 
 // Any member of this project can configure / sync a source. Per
 // product philosophy: no unnecessary owner gates. Reserve owner-only
@@ -56,14 +62,14 @@ export async function addGithubRepo(formData: FormData) {
     where: { projectId_sourceType: { projectId, sourceType: "GITHUB" } },
   });
 
-  const existingRepos: string[] =
-    (existing?.configJson as { repos?: string[] } | null)?.repos ?? [];
+  const existingConfig = (existing?.configJson as GithubConfig | null) ?? {};
+  const existingRepos = existingConfig.repos ?? [];
 
   if (existingRepos.includes(repo)) {
     throw new Error("That repo is already connected");
   }
 
-  const newConfig = { repos: [...existingRepos, repo] };
+  const newConfig = { ...existingConfig, repos: [...existingRepos, repo] };
 
   if (existing) {
     await db.contributionSource.update({
@@ -105,16 +111,63 @@ export async function removeGithubRepo(formData: FormData) {
   });
   if (!source) return;
 
-  const existingRepos: string[] =
-    (source.configJson as { repos?: string[] } | null)?.repos ?? [];
+  const existingConfig = (source.configJson as GithubConfig | null) ?? {};
+  const existingRepos = existingConfig.repos ?? [];
   const newRepos = existingRepos.filter((r) => r !== repo);
 
   await db.contributionSource.update({
     where: { id: source.id },
-    data: { configJson: { repos: newRepos } },
+    data: { configJson: { ...existingConfig, repos: newRepos } },
   });
 
   revalidatePath(`/projects/${projectId}/sources/github`);
+}
+
+const GithubTokenSchema = z.object({
+  projectId: z.string().min(1),
+  githubAccessToken: z.string().trim().min(1, "GitHub token required"),
+});
+
+export async function setGithubAccessToken(formData: FormData) {
+  const user = await requireDbUser();
+  const parsed = GithubTokenSchema.safeParse({
+    projectId: formData.get("projectId"),
+    githubAccessToken: formData.get("githubAccessToken"),
+  });
+  if (!parsed.success) {
+    throw new Error(parsed.error.issues[0]?.message ?? "Invalid input");
+  }
+
+  const { projectId, githubAccessToken } = parsed.data;
+  await requireOwner(projectId, user.id);
+
+  const existing = await db.contributionSource.findUnique({
+    where: { projectId_sourceType: { projectId, sourceType: "GITHUB" } },
+  });
+  const existingConfig = (existing?.configJson as GithubConfig | null) ?? {};
+  const newConfig: GithubConfig = {
+    ...existingConfig,
+    accessToken: githubAccessToken,
+  };
+  delete newConfig.token;
+
+  if (existing) {
+    await db.contributionSource.update({
+      where: { id: existing.id },
+      data: { configJson: newConfig, enabled: true },
+    });
+  } else {
+    await db.contributionSource.create({
+      data: {
+        projectId,
+        sourceType: "GITHUB",
+        configJson: { repos: [], accessToken: githubAccessToken },
+        enabled: true,
+      },
+    });
+  }
+
+  revalidatePath(`/projects/${projectId}/sources`);
 }
 
 const IdentitySchema = z.object({
@@ -176,185 +229,9 @@ export async function syncGithubSource(formData: FormData) {
   const { projectId } = parsed.data;
   await requireMember(projectId, user.id);
 
-  const source = await db.contributionSource.findUnique({
-    where: { projectId_sourceType: { projectId, sourceType: "GITHUB" } },
-  });
-  if (!source) throw new Error("No GitHub source configured");
-
-  const config = source.configJson as { repos?: string[] } | null;
-  const repos = config?.repos ?? [];
-  if (repos.length === 0) throw new Error("No repos configured");
-
-  const identities = await db.sourceIdentity.findMany({
-    where: { projectId, sourceType: "GITHUB" },
-    include: { projectMember: true },
-  });
-  const usernameToUserId = new Map(
-    identities.map((i) => [
-      i.externalId.toLowerCase(),
-      i.projectMember.userId,
-    ]),
-  );
-
-  // Fallback maps for commits where GitHub's API doesn't resolve a
-  // top-level `author` (commit pushed under an unverified email,
-  // mirrored repo, etc.). The inner `commit.author` block always
-  // carries the raw name + email from the git object — try those
-  // before giving up and recording an unattributed commit.
-  const members = await db.projectMember.findMany({
-    where: { projectId, project: { deletedAt: null } },
-    include: {
-      user: { select: { id: true, email: true, name: true } },
-    },
-  });
-  const emailToUserId = new Map(
-    members.map((m) => [m.user.email.toLowerCase(), m.userId]),
-  );
-  const nameToUserId = new Map(
-    members
-      .filter((m) => m.user.name && m.user.name.trim().length > 0)
-      .map((m) => [m.user.name!.trim().toLowerCase(), m.userId]),
-  );
-
-  const resolveCommitUserId = (c: {
-    author?: { login: string } | null;
-    commit?: { author?: { name?: string; email?: string } | null };
-  }): string | null => {
-    // Primary: GitHub-resolved login.
-    let userId = c.author?.login
-      ? (usernameToUserId.get(c.author.login.toLowerCase()) ?? null)
-      : null;
-    // Fallback 1: raw author email from the git object.
-    if (!userId && c.commit?.author?.email) {
-      userId =
-        emailToUserId.get(c.commit.author.email.toLowerCase()) ?? null;
-    }
-    // Fallback 2: raw author name from the git object.
-    if (!userId && c.commit?.author?.name) {
-      userId =
-        nameToUserId.get(c.commit.author.name.trim().toLowerCase()) ?? null;
-    }
-    return userId;
-  };
-
-  const since =
-    source.lastSyncedAt ?? new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-
-  for (const repo of repos) {
-    const [owner, name] = repo.split("/");
-
-    const commits = await fetchCommits(owner, name, since);
-    if (commits.length > 0) {
-      await db.contributionEvent.createMany({
-        data: commits.map((c) => ({
-          projectId,
-          sourceId: source.id,
-          sourceType: "GITHUB" as const,
-          externalId: c.sha,
-          eventType: "commit",
-          payloadJson: {
-            repo,
-            sha: c.sha,
-            message: c.commit.message.split("\n")[0].slice(0, 200),
-            login: c.author?.login ?? null,
-            url: c.html_url,
-          },
-          userId: resolveCommitUserId(c),
-          weight: 1.0,
-          occurredAt: new Date(c.commit.author?.date ?? Date.now()),
-        })),
-        skipDuplicates: true,
-      });
-
-      await addKnowledgeEntries(
-        commits.map((c) => {
-          const subject = c.commit.message.split("\n")[0].slice(0, 200);
-          const body = c.commit.message.includes("\n")
-            ? c.commit.message.split("\n").slice(1).join("\n").trim()
-            : "";
-          const author = c.author?.login ?? "unknown";
-          return {
-            projectId,
-            source: KB_SOURCES.GITHUB,
-            sourceRefId: `commit:${repo}:${c.sha}`,
-            sourceTypeLabel: "Commit",
-            title: subject,
-            content: [
-              `${repo} · ${c.sha.slice(0, 7)} · @${author}`,
-              body,
-              c.html_url,
-            ]
-              .filter(Boolean)
-              .join("\n"),
-          };
-        }),
-      );
-    }
-
-    const prs = await fetchPullRequests(owner, name);
-    if (prs.length > 0) {
-      await db.contributionEvent.createMany({
-        data: prs.map((pr) => ({
-          projectId,
-          sourceId: source.id,
-          sourceType: "GITHUB" as const,
-          externalId: `pr-${repo}-${pr.number}`,
-          eventType: pr.merged_at
-            ? "pr_merged"
-            : pr.state === "closed"
-              ? "pr_closed"
-              : "pr_opened",
-          payloadJson: {
-            repo,
-            number: pr.number,
-            title: pr.title,
-            login: pr.user?.login ?? null,
-            url: pr.html_url,
-            state: pr.state,
-            merged_at: pr.merged_at,
-          },
-          userId: pr.user?.login
-            ? (usernameToUserId.get(pr.user.login.toLowerCase()) ?? null)
-            : null,
-          weight: 3.0,
-          occurredAt: new Date(pr.created_at),
-        })),
-        skipDuplicates: true,
-      });
-
-      await addKnowledgeEntries(
-        prs.map((pr) => {
-          const state = pr.merged_at
-            ? "merged"
-            : pr.state === "closed"
-              ? "closed"
-              : "opened";
-          const author = pr.user?.login ?? "unknown";
-          return {
-            projectId,
-            source: KB_SOURCES.GITHUB,
-            sourceRefId: `pr:${repo}:${pr.number}`,
-            sourceTypeLabel: `PR ${state}`,
-            title: `#${pr.number} ${pr.title}`,
-            content: [`${repo} · @${author} · ${state}`, pr.html_url].join(
-              "\n",
-            ),
-          };
-        }),
-      );
-    }
-  }
-
-  await db.contributionSource.update({
-    where: { id: source.id },
-    data: { lastSyncedAt: new Date() },
-  });
-
-  // GitHub events change every member's bonus, so recompute.
-  try {
-    await recomputeMemberScores(projectId, "github sync");
-  } catch (err) {
-    console.error("Failed to recompute member scores:", err);
+  const summary = await syncGithubProject(projectId);
+  if (summary.errors.length > 0 && summary.repos === 0) {
+    throw new Error(summary.errors[0]);
   }
 
   revalidatePath(`/projects/${projectId}/sources/github`);

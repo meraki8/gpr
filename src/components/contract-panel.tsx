@@ -28,14 +28,12 @@ export function ContractPanel({
   members,
   isOwner,
   hasSigned,
-  currentUserId,
 }: {
   projectId: string;
   contract: Contract | null;
   members: Member[];
   isOwner: boolean;
   hasSigned: boolean;
-  currentUserId: string;
 }) {
   const [isEditing, setIsEditing] = useState(false);
   const [editContent, setEditContent] = useState(contract?.content ?? "");

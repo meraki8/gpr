@@ -561,9 +561,10 @@ export async function getProjectSources(
   for (const ev of allGithubEvents) {
     if (!ev.userId) continue;
     const existing = statsByUser.get(ev.userId) ?? { commits: 0, prs: 0, totalWeight: 0 };
+    const isCommit = ev.eventType === "commit";
     const isPr = ev.eventType.startsWith("pr_");
     statsByUser.set(ev.userId, {
-      commits: existing.commits + (isPr ? 0 : 1),
+      commits: existing.commits + (isCommit ? 1 : 0),
       prs: existing.prs + (isPr ? 1 : 0),
       totalWeight: existing.totalWeight + ev.weight,
     });

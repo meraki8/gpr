@@ -53,6 +53,7 @@ export default async function ProjectPage({
     cardCountsByUser,
   } = overview;
   const top3 = project.members.slice(0, 3);
+  const renderTimeMs = new Date().getTime();
 
   return (
     <AppShell
@@ -112,6 +113,7 @@ export default async function ProjectPage({
             <OpenCommitments
               projectId={project.id}
               commitments={commitments}
+              renderTimeMs={renderTimeMs}
             />
           </div>
         </div>
@@ -955,9 +957,11 @@ function LeaderboardSnapshot({
 function OpenCommitments({
   projectId,
   commitments,
+  renderTimeMs,
 }: {
   projectId: string;
   commitments: Commitment[];
+  renderTimeMs: number;
 }) {
   const visible = commitments.slice(0, 6);
   return (
@@ -995,7 +999,7 @@ function OpenCommitments({
           </p>
         ) : (
           visible.map((c, i) => {
-            const overdue = c.targetDate.getTime() < Date.now();
+            const overdue = c.targetDate.getTime() < renderTimeMs;
             return (
               <div
                 key={c.id}

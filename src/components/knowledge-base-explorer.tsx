@@ -154,10 +154,17 @@ export function KnowledgeBaseExplorer({
 
   // Local search state — debounced into the URL so the user can type
   // without every keystroke causing a server round-trip.
-  const [searchInput, setSearchInput] = useState(activeFilters.q);
-  useEffect(() => {
-    setSearchInput(activeFilters.q);
-  }, [activeFilters.q]);
+  const [searchDraft, setSearchDraft] = useState({
+    source: activeFilters.q,
+    value: activeFilters.q,
+  });
+  const searchInput =
+    searchDraft.source === activeFilters.q
+      ? searchDraft.value
+      : activeFilters.q;
+  const setSearchInput = (value: string) => {
+    setSearchDraft({ source: activeFilters.q, value });
+  };
 
   const debounceRef = useRef<number | null>(null);
   useEffect(() => {
@@ -174,14 +181,35 @@ export function KnowledgeBaseExplorer({
 
   // Custom range scratch state — only writes to the URL when the
   // user hits Apply.
-  const [customFrom, setCustomFrom] = useState(
-    activeFilters.customFrom ?? "",
-  );
-  const [customTo, setCustomTo] = useState(activeFilters.customTo ?? "");
-  useEffect(() => {
-    setCustomFrom(activeFilters.customFrom ?? "");
-    setCustomTo(activeFilters.customTo ?? "");
-  }, [activeFilters.customFrom, activeFilters.customTo]);
+  const activeCustomFrom = activeFilters.customFrom ?? "";
+  const activeCustomTo = activeFilters.customTo ?? "";
+  const [customDraft, setCustomDraft] = useState({
+    sourceFrom: activeCustomFrom,
+    sourceTo: activeCustomTo,
+    from: activeCustomFrom,
+    to: activeCustomTo,
+  });
+  const customDraftMatches =
+    customDraft.sourceFrom === activeCustomFrom &&
+    customDraft.sourceTo === activeCustomTo;
+  const customFrom = customDraftMatches ? customDraft.from : activeCustomFrom;
+  const customTo = customDraftMatches ? customDraft.to : activeCustomTo;
+  const setCustomFrom = (from: string) => {
+    setCustomDraft({
+      sourceFrom: activeCustomFrom,
+      sourceTo: activeCustomTo,
+      from,
+      to: customTo,
+    });
+  };
+  const setCustomTo = (to: string) => {
+    setCustomDraft({
+      sourceFrom: activeCustomFrom,
+      sourceTo: activeCustomTo,
+      from: customFrom,
+      to,
+    });
+  };
 
   const now = useMemo(() => new Date(), []);
 
@@ -470,10 +498,14 @@ function Pagination({
   pageSize: number;
   onPage: (n: number) => void;
 }) {
-  const [jumpInput, setJumpInput] = useState(String(page));
-  useEffect(() => {
-    setJumpInput(String(page));
-  }, [page]);
+  const [jumpDraft, setJumpDraft] = useState({
+    page,
+    value: String(page),
+  });
+  const jumpInput = jumpDraft.page === page ? jumpDraft.value : String(page);
+  const setJumpInput = (value: string) => {
+    setJumpDraft({ page, value });
+  };
 
   const start = (page - 1) * pageSize + 1;
   const end = Math.min(page * pageSize, totalCount);

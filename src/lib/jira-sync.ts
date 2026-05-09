@@ -2,6 +2,7 @@ import "server-only";
 import { db } from "./db";
 import { addKnowledgeEntries, KB_SOURCES } from "./kb";
 import { recomputeMemberScores } from "./scoring";
+import { fetchRepositoryCodeEvidence, type GhCodeEvidence } from "./github";
 import {
   fetchIssueComments,
   fetchIssueStatusChanges,
@@ -44,6 +45,12 @@ type JiraSourceConfig = {
   webhookSecret?: string;
 };
 
+type GithubSourceConfig = {
+  repos?: string[];
+  accessToken?: string;
+  token?: string;
+};
+
 function configToAuth(config: JiraSourceConfig): {
   auth: JiraAuth;
   projectKey: string;
@@ -78,6 +85,55 @@ function isStale(issue: JiraIssue): boolean {
   const updated = Date.parse(issue.updated);
   if (Number.isNaN(updated)) return false;
   return Date.now() - updated > STALE_DAYS * ONE_DAY_MS;
+}
+
+function buildIssuePayload(issue: JiraIssue): Record<string, unknown> {
+  return {
+    issueId: issue.id,
+    issueKey: issue.key,
+    summary: issue.summary,
+    title: `[${issue.key}] ${issue.summary}`,
+    status: issue.statusName,
+    statusCategory: issue.statusCategory,
+    assigneeAccountId: issue.assigneeAccountId,
+    assigneeDisplayName: issue.assigneeDisplayName,
+    login: issue.assigneeDisplayName ?? null,
+    dueDate: issue.dueDate,
+    priority: issue.priority,
+    url: issue.url,
+    sprintActiveName: issue.sprintActiveName,
+    sprintNames: issue.sprintNames,
+  };
+}
+
+async function fetchGithubEvidenceForIssue(
+  repos: string[],
+  issue: JiraIssue,
+  accessToken?: string,
+): Promise<GhCodeEvidence[]> {
+  if (repos.length === 0) return [];
+
+  const evidence: GhCodeEvidence[] = [];
+  const criteriaText = [issue.summary, issue.description];
+  for (const repo of repos.slice(0, 3)) {
+    const [owner, name] = repo.split("/");
+    if (!owner || !name) continue;
+    try {
+      evidence.push(
+        ...(await fetchRepositoryCodeEvidence(
+          owner,
+          name,
+          criteriaText,
+          4,
+          accessToken,
+        )),
+      );
+    } catch {
+      // AC judgement still works from Jira text if GitHub evidence is unavailable.
+    }
+  }
+
+  return evidence.slice(0, 8);
 }
 
 export type JiraSyncSummary = {
@@ -128,6 +184,15 @@ export async function syncJiraProject(
     return summary;
   }
 
+  const githubSource = await db.contributionSource.findUnique({
+    where: { projectId_sourceType: { projectId, sourceType: "GITHUB" } },
+  });
+  const githubRepos =
+    (githubSource?.configJson as GithubSourceConfig | null)?.repos ?? [];
+  const githubAccessToken = (
+    githubSource?.configJson as GithubSourceConfig | null
+  )?.accessToken ?? (githubSource?.configJson as GithubSourceConfig | null)?.token;
+
   let allIssues: JiraIssue[];
   try {
     allIssues = await searchProjectIssues(ctx.auth, ctx.projectKey);
@@ -141,7 +206,7 @@ export async function syncJiraProject(
   // so the slice keeps the freshest ones — exactly what the user
   // is most likely to be looking at after moving a ticket.
   const issues = allIssues.slice(0, ISSUES_PER_SYNC);
-  summary.scanned = issues.length;
+  summary.scanned = allIssues.length;
 
   // Map Jira accountId -> GPR userId once.
   const identities = await db.sourceIdentity.findMany({
@@ -231,12 +296,16 @@ export async function syncJiraProject(
     await Promise.all(
       batch.map(async (issue) => {
         try {
-          const comments = await fetchIssueComments(ctx.auth, issue.key);
+          const [comments, githubEvidence] = await Promise.all([
+            fetchIssueComments(ctx.auth, issue.key),
+            fetchGithubEvidenceForIssue(githubRepos, issue, githubAccessToken),
+          ]);
           const verdict = await judgeAcceptanceCriteria({
             issueKey: issue.key,
             summary: issue.summary,
             description: issue.description,
             comments,
+            githubEvidence,
           });
           acVerdictByIssueId.set(issue.id, verdict);
         } catch (err) {
@@ -272,22 +341,7 @@ export async function syncJiraProject(
       ? (accountIdToUserId.get(issue.assigneeAccountId) ?? null)
       : null;
 
-    const basePayload = {
-      issueId: issue.id,
-      issueKey: issue.key,
-      summary: issue.summary,
-      title: `[${issue.key}] ${issue.summary}`,
-      status: issue.statusName,
-      statusCategory: issue.statusCategory,
-      assigneeAccountId: issue.assigneeAccountId,
-      assigneeDisplayName: issue.assigneeDisplayName,
-      login: issue.assigneeDisplayName ?? null,
-      dueDate: issue.dueDate,
-      priority: issue.priority,
-      url: issue.url,
-      sprintActiveName: issue.sprintActiveName,
-      sprintNames: issue.sprintNames,
-    };
+    const basePayload = buildIssuePayload(issue);
 
     const prior = lastSeenByIssueId.get(issue.id);
 
@@ -485,14 +539,67 @@ export async function syncJiraProject(
     }
   }
 
+  const recentIssueIds = new Set(issues.map((issue) => issue.id));
+  const fullScanOverdueIssues = allIssues.filter(
+    (issue) => !recentIssueIds.has(issue.id) && isOverdue(issue),
+  );
+
+  for (const issue of fullScanOverdueIssues) {
+    const userId = issue.assigneeAccountId
+      ? (accountIdToUserId.get(issue.assigneeAccountId) ?? null)
+      : null;
+    const basePayload = buildIssuePayload(issue);
+
+    try {
+      const wrote = await writeEvent(source.id, projectId, {
+        externalId: `overdue:${issue.id}:${todayKey()}`,
+        eventType: "issue_overdue",
+        payload: basePayload,
+        userId,
+        occurredAt: new Date(),
+      });
+      if (wrote) {
+        summary.overdue += 1;
+        if (userId) {
+          await db.card.create({
+            data: {
+              projectId,
+              userId,
+              cardType: "YELLOW",
+              reason: `Jira ticket ${issue.key} is overdue: "${issue.summary}"`,
+              evidenceJson: {
+                issueKey: issue.key,
+                summary: issue.summary,
+                dueDate: issue.dueDate,
+                url: issue.url,
+              },
+            },
+          });
+        }
+      }
+    } catch (err) {
+      summary.errors.push(
+        `Overdue issue ${issue.key}: ${err instanceof Error ? err.message : "unknown error"}`,
+      );
+    }
+  }
+
   // Mirror noteworthy events into the KB so Ask GPR sees them too.
   if (summary.created + summary.completed + summary.overdue > 0) {
-    const noteworthy = issues.filter(
-      (i) =>
+    const noteworthyById = new Map<string, JiraIssue>();
+    for (const i of issues) {
+      if (
         i.statusCategory === "done" ||
         isOverdue(i) ||
-        !lastSeenByIssueId.has(i.id),
-    );
+        !lastSeenByIssueId.has(i.id)
+      ) {
+        noteworthyById.set(i.id, i);
+      }
+    }
+    for (const i of fullScanOverdueIssues) {
+      noteworthyById.set(i.id, i);
+    }
+    const noteworthy = [...noteworthyById.values()];
     if (noteworthy.length > 0) {
       await addKnowledgeEntries(
         noteworthy.map((i) => ({

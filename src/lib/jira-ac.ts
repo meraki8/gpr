@@ -24,7 +24,7 @@ export type AcVerdict = {
   summary: string;
 };
 
-export const AC_JUDGE_VERSION = 2;
+export const AC_JUDGE_VERSION = 3;
 
 const EMPTY_VERDICT: AcVerdict = {
   hasAc: false,
@@ -100,6 +100,12 @@ export async function judgeAcceptanceCriteria(input: {
   summary: string;
   description: string;
   comments: string[];
+  githubEvidence?: {
+    repo: string;
+    path: string;
+    url: string;
+    content: string;
+  }[];
 }): Promise<AcVerdict> {
   // Skip the API call entirely if there's nothing to evaluate.
   if (!input.description || input.description.trim().length < 10) {
@@ -125,6 +131,11 @@ export async function judgeAcceptanceCriteria(input: {
     `If no candidates are real acceptance criteria, return hasAc=false and an empty judgements list.`,
     ``,
     `For each real criterion you keep, decide whether it is met.`,
+    input.githubEvidence && input.githubEvidence.length > 0
+      ? `GitHub code evidence is available. Use it as the primary implementation evidence: routes, components, labels, API handlers, and tests can prove an AC is met.`
+      : `No GitHub code evidence is available for this ticket.`,
+    `If GitHub code evidence clearly implements or tests a criterion, mark it met even if there are no Jira comments.`,
+    `If GitHub code evidence is available but contradicts or lacks the implementation for a specific concrete criterion, mark that criterion not met.`,
     `The Jira ticket is already marked Done. Treat that Done status as the team's completion claim for normal, concrete acceptance criteria.`,
     `A markdown checkbox marker under Acceptance Criteria is formatting, not proof that the criterion is incomplete. Do not fail a criterion only because it is written with [ ].`,
     `Mark a real criterion not met only when the description or comments directly say it is missing, blocked, failing, contradicted, impossible, or outside the completed work.`,
@@ -143,6 +154,17 @@ export async function judgeAcceptanceCriteria(input: {
     `RECENT COMMENTS:`,
     input.comments.slice(0, 8).map((c, i) => `${i + 1}. ${c.slice(0, 800)}`).join("\n") ||
       "(no comments)",
+    ``,
+    `GITHUB CODE EVIDENCE:`,
+    input.githubEvidence && input.githubEvidence.length > 0
+      ? input.githubEvidence
+          .slice(0, 8)
+          .map(
+            (e, i) =>
+              `FILE ${i + 1}: ${e.repo}/${e.path}\nURL: ${e.url}\n${e.content.slice(0, 5000)}`,
+          )
+          .join("\n\n---\n\n")
+      : "(none)",
     ``,
     `Respond as JSON:`,
     `{`,
