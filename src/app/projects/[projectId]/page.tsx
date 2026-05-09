@@ -51,7 +51,11 @@ export default async function ProjectPage({
       allGroups={nav.allGroups}
       activeGroup={nav.activeGroup}
       groupProjects={nav.groupProjects}
-      currentProject={{ id: project.id, name: project.name }}
+      currentProject={{
+        id: project.id,
+        name: project.name,
+        deadlineIso: project.deadline?.toISOString() ?? null,
+      }}
     >
       <main
         className="wrap-w fade-up"
@@ -1015,13 +1019,7 @@ function Avatar({
 
 function QuickActions({ projectId }: { projectId: string }) {
   return (
-    <section
-      style={{
-        position: "sticky",
-        top: 24,
-        zIndex: 1,
-      }}
-    >
+    <section>
       <div
         style={{
           border: "1px solid var(--line)",

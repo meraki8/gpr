@@ -33,7 +33,11 @@ export default async function MembersPage({
       allGroups={nav.allGroups}
       activeGroup={nav.activeGroup}
       groupProjects={nav.groupProjects}
-      currentProject={{ id: project.id, name: project.name }}
+      currentProject={{
+        id: project.id,
+        name: project.name,
+        deadlineIso: project.deadline?.toISOString() ?? null,
+      }}
     >
       <main className="wrap-w" style={{ paddingBottom: 160 }}>
         <PageHead

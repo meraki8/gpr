@@ -23,7 +23,13 @@ import type { ReactNode } from "react";
 import { AskGprPanel } from "./ask-gpr-panel";
 
 type SidebarGroup = { id: string; name: string };
-type SidebarProject = { id: string; name: string };
+type SidebarProject = {
+  id: string;
+  name: string;
+  // Optional ISO string. When set and we're on a project page, the
+  // sidebar shows a live deadline countdown above the user profile.
+  deadlineIso?: string | null;
+};
 type Theme = "dark" | "light";
 
 const STORAGE_THEME = "gpr_theme";
@@ -319,6 +325,13 @@ export function AppShell({
               )}
             </IconButton>
           </div>
+
+          {currentProject?.deadlineIso && (
+            <SidebarDeadline
+              iso={currentProject.deadlineIso}
+              collapsed={collapsed}
+            />
+          )}
 
           <div
             style={{
@@ -687,6 +700,150 @@ function IconButton({
     </button>
   );
 }
+
+function SidebarDeadline({
+  iso,
+  collapsed,
+}: {
+  iso: string;
+  collapsed: boolean;
+}) {
+  const target = new Date(iso).getTime();
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, []);
+
+  const diff = target - now;
+  const overdue = diff <= 0;
+  // Pulse + red treatment kicks in inside the last 24h.
+  const urgent = !overdue && diff < 24 * 60 * 60 * 1000;
+
+  const abs = Math.abs(diff);
+  const days = Math.floor(abs / (1000 * 60 * 60 * 24));
+  const hours = Math.floor((abs % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+  const minutes = Math.floor((abs % (1000 * 60 * 60)) / (1000 * 60));
+  const seconds = Math.floor((abs % (1000 * 60)) / 1000);
+
+  // Compact form for collapsed sidebar — just the most significant
+  // remaining unit so the column stays narrow.
+  if (collapsed) {
+    const compact = overdue
+      ? "!"
+      : days > 0
+        ? `${days}d`
+        : hours > 0
+          ? `${hours}h`
+          : `${minutes}m`;
+    return (
+      <div
+        title={overdue ? "OVERDUE" : `Deadline in ${days}d ${hours}h ${minutes}m`}
+        style={{
+          padding: "10px 6px",
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          gap: 2,
+          color: overdue || urgent ? SIDEBAR_RED : SIDEBAR_INK,
+          fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+          fontSize: 12,
+          fontWeight: 600,
+          animation: urgent || overdue ? "gprPulse 1.4s ease-in-out infinite" : undefined,
+        }}
+      >
+        <span
+          style={{
+            fontSize: 9,
+            letterSpacing: "0.12em",
+            color: SIDEBAR_MUTE,
+          }}
+        >
+          DUE
+        </span>
+        <span>{compact}</span>
+        <style>{pulseKeyframes}</style>
+      </div>
+    );
+  }
+
+  const color = overdue || urgent ? SIDEBAR_RED : SIDEBAR_INK;
+
+  return (
+    <div
+      style={{
+        padding: "10px 12px 12px",
+        margin: "0 4px",
+        borderRadius: 8,
+        background:
+          overdue || urgent ? "rgba(255, 59, 48, 0.08)" : "rgba(255, 255, 255, 0.025)",
+        border: `1px solid ${overdue || urgent ? "rgba(255, 59, 48, 0.35)" : SIDEBAR_BORDER}`,
+        animation: urgent || overdue ? "gprPulse 1.4s ease-in-out infinite" : undefined,
+      }}
+    >
+      <div
+        style={{
+          fontSize: 10,
+          letterSpacing: "0.14em",
+          color: SIDEBAR_MUTE,
+          marginBottom: 4,
+        }}
+      >
+        DEADLINE
+      </div>
+      {overdue ? (
+        <div
+          style={{
+            fontSize: 16,
+            fontWeight: 700,
+            color: SIDEBAR_RED,
+            letterSpacing: "0.02em",
+          }}
+        >
+          OVERDUE
+        </div>
+      ) : (
+        <div
+          style={{
+            fontFamily:
+              "ui-monospace, SFMono-Regular, Menlo, monospace",
+            fontSize: 16,
+            fontWeight: 600,
+            color,
+            fontVariantNumeric: "tabular-nums",
+          }}
+        >
+          {days > 0 && (
+            <span>
+              {days}d <span style={{ opacity: 0.55 }}>{hours}h</span>{" "}
+              <span style={{ opacity: 0.55 }}>{minutes}m</span>
+            </span>
+          )}
+          {days === 0 && hours > 0 && (
+            <span>
+              {hours}h <span style={{ opacity: 0.55 }}>{minutes}m</span>{" "}
+              <span style={{ opacity: 0.4 }}>{String(seconds).padStart(2, "0")}s</span>
+            </span>
+          )}
+          {days === 0 && hours === 0 && (
+            <span>
+              {minutes}m <span style={{ opacity: 0.55 }}>{String(seconds).padStart(2, "0")}s</span>
+            </span>
+          )}
+        </div>
+      )}
+      <style>{pulseKeyframes}</style>
+    </div>
+  );
+}
+
+const pulseKeyframes = `
+@keyframes gprPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+`;
 
 function ProjectInitial({ name }: { name: string }) {
   const ch = name.trim()[0]?.toUpperCase() ?? "•";

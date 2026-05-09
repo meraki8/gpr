@@ -2,21 +2,69 @@ import { AppShell } from "@/components/app-shell";
 import { KnowledgeBaseExplorer } from "@/components/knowledge-base-explorer";
 import { PageHead } from "@/components/page-head";
 import { requireDbUser } from "@/lib/auth";
-import { getNavContext, getProjectKb } from "@/lib/data";
+import {
+  getNavContext,
+  getProjectKb,
+  type KbDateRangeKey,
+} from "@/lib/data";
 import { addManualKnowledgeEntry } from "./actions";
+
+const VALID_RANGES: KbDateRangeKey[] = [
+  "today",
+  "7d",
+  "30d",
+  "3m",
+  "all",
+  "custom",
+];
+
+function firstParam(
+  v: string | string[] | undefined,
+): string | undefined {
+  return Array.isArray(v) ? v[0] : v;
+}
 
 export default async function KnowledgeBasePage({
   params,
+  searchParams,
 }: {
   params: Promise<{ projectId: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const { projectId } = await params;
-  const [user, nav, { project, entries, canAddManual }] =
-    await Promise.all([
-      requireDbUser(),
-      getNavContext({ projectId }),
-      getProjectKb(projectId),
-    ]);
+  const sp = await searchParams;
+
+  const rawRange = firstParam(sp.range);
+  const range: KbDateRangeKey =
+    rawRange && (VALID_RANGES as string[]).includes(rawRange)
+      ? (rawRange as KbDateRangeKey)
+      : "all";
+  const filters = {
+    page: Number(firstParam(sp.page) ?? 1) || 1,
+    range,
+    customFrom: firstParam(sp.from) ?? null,
+    customTo: firstParam(sp.to) ?? null,
+    source: firstParam(sp.source) ?? null,
+    q: firstParam(sp.q) ?? null,
+  };
+
+  const [user, nav, kb] = await Promise.all([
+    requireDbUser(),
+    getNavContext({ projectId }),
+    getProjectKb(projectId, filters),
+  ]);
+  const {
+    project,
+    entries,
+    totalCount,
+    page,
+    totalPages,
+    pageSize,
+    sourceCounts,
+    sourceTotal,
+    canAddManual,
+    activeFilters,
+  } = kb;
 
   return (
     <AppShell
@@ -24,16 +72,20 @@ export default async function KnowledgeBasePage({
       allGroups={nav.allGroups}
       activeGroup={nav.activeGroup}
       groupProjects={nav.groupProjects}
-      currentProject={{ id: project.id, name: project.name }}
+      currentProject={{
+        id: project.id,
+        name: project.name,
+        deadlineIso: project.deadline?.toISOString() ?? null,
+      }}
     >
       <main className="wrap-w" style={{ paddingBottom: 160 }}>
         <PageHead
           eyebrow={`Knowledge base · ${project.name}`}
           title="What the project knows."
           sub={
-            entries.length === 0
+            totalCount === 0
               ? "Nothing yet. Run a transcript analysis, sync GitHub, or add a note below."
-              : `${entries.length} entr${entries.length === 1 ? "y" : "ies"}. Search, filter, and click to read.`
+              : `${totalCount} entr${totalCount === 1 ? "y" : "ies"} match. Search, filter, and click to read.`
           }
         />
 
@@ -85,7 +137,16 @@ export default async function KnowledgeBasePage({
           </section>
         )}
 
-        <KnowledgeBaseExplorer entries={entries} />
+        <KnowledgeBaseExplorer
+          entries={entries}
+          totalCount={totalCount}
+          page={page}
+          totalPages={totalPages}
+          pageSize={pageSize}
+          sourceCounts={sourceCounts}
+          sourceTotal={sourceTotal}
+          activeFilters={activeFilters}
+        />
       </main>
     </AppShell>
   );
