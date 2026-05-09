@@ -911,6 +911,7 @@ export async function getProjectLeaderboard(projectId: string) {
       id: project.id,
       name: project.name,
       group: project.group,
+      deadline: project.deadline,
     },
     members: enrichedMembers,
     totals: {
@@ -922,7 +923,94 @@ export async function getProjectLeaderboard(projectId: string) {
   };
 }
 
-export async function getProjectKb(projectId: string) {
+export const KB_PAGE_SIZE = 20;
+
+export type KbDateRangeKey =
+  | "today"
+  | "7d"
+  | "30d"
+  | "3m"
+  | "all"
+  | "custom";
+
+export type KbFilters = {
+  page?: number;
+  range?: KbDateRangeKey;
+  customFrom?: string | null; // YYYY-MM-DD
+  customTo?: string | null;
+  source?: string | null;
+  q?: string | null;
+};
+
+// Resolve the active date window from a quick-select key (or a
+// custom from/to). Returns null if the range covers everything.
+function resolveKbWindow(
+  range: KbDateRangeKey,
+  customFrom: string | null,
+  customTo: string | null,
+): { gte?: Date; lt?: Date } | null {
+  const now = new Date();
+  const startOfToday = new Date(now);
+  startOfToday.setHours(0, 0, 0, 0);
+  switch (range) {
+    case "today":
+      return { gte: startOfToday };
+    case "7d":
+      return {
+        gte: new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000),
+      };
+    case "30d":
+      return {
+        gte: new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000),
+      };
+    case "3m":
+      return {
+        gte: new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000),
+      };
+    case "custom": {
+      const out: { gte?: Date; lt?: Date } = {};
+      if (customFrom) {
+        const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(customFrom);
+        if (m) {
+          out.gte = new Date(
+            Number(m[1]),
+            Number(m[2]) - 1,
+            Number(m[3]),
+            0,
+            0,
+            0,
+            0,
+          );
+        }
+      }
+      if (customTo) {
+        const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(customTo);
+        if (m) {
+          // End-of-day inclusive: bump to next day midnight.
+          const end = new Date(
+            Number(m[1]),
+            Number(m[2]) - 1,
+            Number(m[3]) + 1,
+            0,
+            0,
+            0,
+            0,
+          );
+          out.lt = end;
+        }
+      }
+      return out.gte || out.lt ? out : null;
+    }
+    case "all":
+    default:
+      return null;
+  }
+}
+
+export async function getProjectKb(
+  projectId: string,
+  filters: KbFilters = {},
+) {
   const user = await requireDbUser();
   const project = await db.project.findFirst({
     where: {
@@ -943,19 +1031,84 @@ export async function getProjectKb(projectId: string) {
   });
   if (!project) notFound();
 
-  // Pull all entries — filtering / grouping / search live in the
-  // client component. KB stays small enough that this is fine even
-  // for projects that have been running for months.
-  const entries = await db.knowledgeEntry.findMany({
-    where: { projectId },
-    orderBy: { createdAt: "desc" },
-    take: 1000,
-  });
+  const range: KbDateRangeKey = filters.range ?? "all";
+  const customFrom = filters.customFrom ?? null;
+  const customTo = filters.customTo ?? null;
+  const sourceFilter = filters.source ?? null;
+  const q = (filters.q ?? "").trim();
+  const page = Math.max(1, Math.floor(filters.page ?? 1));
+
+  const window = resolveKbWindow(range, customFrom, customTo);
+
+  type Where = NonNullable<
+    Parameters<typeof db.knowledgeEntry.findMany>[0]
+  >["where"];
+  const where: Where = { projectId };
+  if (window) {
+    where.createdAt = {
+      ...(window.gte ? { gte: window.gte } : {}),
+      ...(window.lt ? { lt: window.lt } : {}),
+    };
+  }
+  if (sourceFilter) {
+    where.source = sourceFilter;
+  }
+  if (q.length > 0) {
+    where.OR = [
+      { title: { contains: q, mode: "insensitive" } },
+      { content: { contains: q, mode: "insensitive" } },
+      { assignedTo: { contains: q, mode: "insensitive" } },
+    ];
+  }
+
+  const [totalCount, entries, sourceFacets] = await Promise.all([
+    db.knowledgeEntry.count({ where }),
+    db.knowledgeEntry.findMany({
+      where,
+      orderBy: { createdAt: "desc" },
+      skip: (page - 1) * KB_PAGE_SIZE,
+      take: KB_PAGE_SIZE,
+    }),
+    // Source-filter chip counts respect the current date + search
+    // window so the numbers always match what's actually visible.
+    (async () => {
+      const baseWhere: Where = { projectId };
+      if (window) {
+        baseWhere.createdAt = {
+          ...(window.gte ? { gte: window.gte } : {}),
+          ...(window.lt ? { lt: window.lt } : {}),
+        };
+      }
+      if (q.length > 0) {
+        baseWhere.OR = [
+          { title: { contains: q, mode: "insensitive" } },
+          { content: { contains: q, mode: "insensitive" } },
+          { assignedTo: { contains: q, mode: "insensitive" } },
+        ];
+      }
+      const grouped = await db.knowledgeEntry.groupBy({
+        by: ["source"],
+        where: baseWhere,
+        _count: { _all: true },
+      });
+      const counts: Record<string, number> = {};
+      let total = 0;
+      for (const g of grouped) {
+        counts[g.source] = g._count._all;
+        total += g._count._all;
+      }
+      return { counts, total };
+    })(),
+  ]);
+
+  const totalPages = Math.max(
+    1,
+    Math.ceil(totalCount / KB_PAGE_SIZE),
+  );
+  const safePage = Math.min(page, totalPages);
 
   const viewerMember = project.members[0];
   const isOwner = viewerMember?.role === "OWNER";
-  // Manual KB entry is open to owners and any member with the
-  // run_analysis capability — same trust level we use for analysis.
   const canAddManual = viewerMember
     ? resolveCapability(
         viewerMember.role,
@@ -963,7 +1116,25 @@ export async function getProjectKb(projectId: string) {
         viewerMember.capabilities,
       )
     : false;
-  return { project, entries, isOwner, canAddManual };
+  return {
+    project,
+    entries,
+    totalCount,
+    page: safePage,
+    totalPages,
+    pageSize: KB_PAGE_SIZE,
+    sourceCounts: sourceFacets.counts,
+    sourceTotal: sourceFacets.total,
+    isOwner,
+    canAddManual,
+    activeFilters: {
+      range,
+      customFrom,
+      customTo,
+      source: sourceFilter,
+      q,
+    },
+  };
 }
 
 export async function getMatchReport(reportId: string) {

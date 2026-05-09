@@ -1,5 +1,5 @@
-import Link from "next/link";
-import { Wordmark } from "@/components/wordmark";
+import { PublicFooter } from "@/components/public-footer";
+import { PublicNav } from "@/components/public-nav";
 
 export const metadata = {
   title: "Changelog — GPR",
@@ -93,23 +93,10 @@ type RoadmapItem = {
   detail: string;
 };
 
-export default function ChangelogPage() {
+export default async function ChangelogPage() {
   return (
     <main className="flex flex-1 flex-col">
-      <header
-        className="flex items-center justify-between"
-        style={{ padding: "28px 40px" }}
-      >
-        <Wordmark />
-        <nav style={{ display: "flex", gap: 28, fontSize: 14 }}>
-          <Link href="/" className="lk-mute">
-            Home
-          </Link>
-          <Link href="/sign-in" className="lk-mute">
-            Sign in
-          </Link>
-        </nav>
-      </header>
+      <PublicNav links={[{ href: "/", label: "Home" }]} />
 
       <section className="wrap" style={{ paddingTop: 100, paddingBottom: 40 }}>
         <div className="label fade-up" style={{ marginBottom: 24 }}>
@@ -403,20 +390,7 @@ export default function ChangelogPage() {
         </div>
       </section>
 
-      <footer
-        style={{
-          padding: 40,
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          color: "var(--mute)",
-          fontSize: 13,
-          borderTop: "1px solid var(--line)",
-        }}
-      >
-        <Wordmark small />
-        <span>© {new Date().getFullYear()} GPR · Group Project Referee</span>
-      </footer>
+      <PublicFooter />
     </main>
   );
 }

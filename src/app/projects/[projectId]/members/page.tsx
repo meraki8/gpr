@@ -7,7 +7,8 @@ import { Score } from "@/components/score";
 import { ResendInviteButton } from "@/components/resend-invite-button";
 import { requireDbUser } from "@/lib/auth";
 import { getNavContext, getProjectMembers } from "@/lib/data";
-import { inviteMember } from "../actions";
+import { InviteForm } from "@/components/invite-form";
+import { cancelInvite } from "../actions";
 
 export default async function MembersPage({
   params,
@@ -32,7 +33,11 @@ export default async function MembersPage({
       allGroups={nav.allGroups}
       activeGroup={nav.activeGroup}
       groupProjects={nav.groupProjects}
-      currentProject={{ id: project.id, name: project.name }}
+      currentProject={{
+        id: project.id,
+        name: project.name,
+        deadlineIso: project.deadline?.toISOString() ?? null,
+      }}
     >
       <main className="wrap-w" style={{ paddingBottom: 160 }}>
         <PageHead
@@ -45,20 +50,7 @@ export default async function MembersPage({
           }
           right={
             viewerIsOwner ? (
-              <form action={inviteMember} style={{ display: "flex", gap: 10 }}>
-                <input type="hidden" name="projectId" value={project.id} />
-                <input
-                  type="email"
-                  name="email"
-                  placeholder="teammate@example.com"
-                  required
-                  className="field"
-                  style={{ width: 240 }}
-                />
-                <button type="submit" className="pill pill-sm">
-                  Invite →
-                </button>
-              </form>
+              <InviteForm projectId={project.id} />
             ) : null
           }
         />
@@ -251,7 +243,19 @@ export default async function MembersPage({
                       {daysLeft} day{daysLeft === 1 ? "" : "s"} left
                     </span>
                     {viewerIsOwner && (
-                      <ResendInviteButton inviteId={inv.id} />
+                      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                        <ResendInviteButton inviteId={inv.id} />
+                        <form action={cancelInvite}>
+                          <input type="hidden" name="inviteId" value={inv.id} />
+                          <button
+                            type="submit"
+                            className="lk-mute"
+                            style={{ fontSize: 12 }}
+                          >
+                            Cancel
+                          </button>
+                        </form>
+                      </div>
                     )}
                   </li>
                 );

@@ -29,6 +29,18 @@ const InviteSchema = z.object({
     .email("Valid email address required"),
 });
 
+export async function inviteMemberAction(
+  _prevState: { error: string } | null,
+  formData: FormData,
+): Promise<{ error: string } | null> {
+  try {
+    await inviteMember(formData);
+    return null;
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : "Failed to send invite" };
+  }
+}
+
 export async function inviteMember(formData: FormData) {
   const user = await requireDbUser();
 
@@ -59,8 +71,24 @@ export async function inviteMember(formData: FormData) {
       },
     });
     if (alreadyMember) {
-      throw new Error("That email is already a project member");
+      throw new Error("That person is already a member of this project");
     }
+  }
+
+  // Block re-inviting an email that already accepted a previous invite.
+  const acceptedInvite = await db.projectInvite.findFirst({
+    where: { projectId, email, acceptedAt: { not: null } },
+  });
+  if (acceptedInvite) {
+    throw new Error("That person has already accepted an invite to this project");
+  }
+
+  // Block duplicate pending invites for the same email.
+  const pendingInvite = await db.projectInvite.findFirst({
+    where: { projectId, email, acceptedAt: null, expiresAt: { gt: new Date() } },
+  });
+  if (pendingInvite) {
+    throw new Error("An invite is already pending for that email");
   }
 
   const token = randomBytes(32).toString("base64url");
@@ -85,6 +113,39 @@ export async function inviteMember(formData: FormData) {
   });
 
   revalidatePath(`/projects/${projectId}`);
+}
+
+const CancelInviteSchema = z.object({
+  inviteId: z.string().min(1),
+});
+
+export async function cancelInvite(formData: FormData) {
+  const user = await requireDbUser();
+
+  const parsed = CancelInviteSchema.safeParse({
+    inviteId: formData.get("inviteId"),
+  });
+  if (!parsed.success) throw new Error("Invalid input");
+
+  const invite = await db.projectInvite.findFirst({
+    where: {
+      id: parsed.data.inviteId,
+      acceptedAt: null,
+      project: {
+        deletedAt: null,
+        members: { some: { userId: user.id, role: "OWNER" } },
+      },
+    },
+  });
+  if (!invite) throw new Error("FORBIDDEN");
+
+  // Set expiresAt to now so the token is immediately dead.
+  await db.projectInvite.update({
+    where: { id: invite.id },
+    data: { expiresAt: new Date() },
+  });
+
+  revalidatePath(`/projects/${invite.projectId}/members`);
 }
 
 const ResendInviteSchema = z.object({

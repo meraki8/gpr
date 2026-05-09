@@ -46,7 +46,11 @@ export default async function LeaderboardPage({
       allGroups={nav.allGroups}
       activeGroup={nav.activeGroup}
       groupProjects={nav.groupProjects}
-      currentProject={{ id: board.project.id, name: board.project.name }}
+      currentProject={{
+        id: board.project.id,
+        name: board.project.name,
+        deadlineIso: board.project.deadline?.toISOString() ?? null,
+      }}
     >
       <main className="wrap-w" style={{ paddingBottom: 160 }}>
         <PageHead

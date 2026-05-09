@@ -43,6 +43,7 @@ export default async function ReportPage({
       currentProject={{
         id: report.project.id,
         name: report.project.name,
+        deadlineIso: report.project.deadline?.toISOString() ?? null,
       }}
     >
       <main className="wrap-w" style={{ paddingBottom: 160 }}>

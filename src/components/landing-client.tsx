@@ -6,6 +6,7 @@ import { gsap } from "gsap";
 import { ScrollTrigger } from "gsap/ScrollTrigger";
 import { Wordmark } from "@/components/wordmark";
 import { RefCard, type RefCardKind } from "@/components/ref-card";
+import { PublicFooter } from "@/components/public-footer";
 
 if (typeof window !== "undefined") {
   gsap.registerPlugin(ScrollTrigger);
@@ -47,11 +48,19 @@ export function LandingClient({ isSignedIn }: Props) {
 
       gsap.set(".hero-eyebrow", { y: 12, opacity: 0 });
       gsap.set(".hero-word", { y: 28, opacity: 0 });
+      gsap.set(".hero-line", { scaleX: 0 });
       gsap.set(".hero-sub", { y: 18, opacity: 0 });
       gsap.set(".hero-cta", { scale: 0.8, opacity: 0 });
+      gsap.set(".hero-glow", { opacity: 0, scale: 0.85 });
 
       heroTl
-        .to(".hero-eyebrow", { y: 0, opacity: 1, duration: 0.55 })
+        .to(".hero-glow", {
+          opacity: 1,
+          scale: 1,
+          duration: 1.2,
+          ease: "power2.out",
+        })
+        .to(".hero-eyebrow", { y: 0, opacity: 1, duration: 0.55 }, "-=1.0")
         .to(
           ".hero-word",
           {
@@ -63,7 +72,16 @@ export function LandingClient({ isSignedIn }: Props) {
           },
           "-=0.2",
         )
-        .to(".hero-sub", { y: 0, opacity: 1, duration: 0.7 }, "+=0.05")
+        .to(
+          ".hero-line",
+          {
+            scaleX: 1,
+            duration: 1.0,
+            ease: "power4.inOut",
+          },
+          "-=0.3",
+        )
+        .to(".hero-sub", { y: 0, opacity: 1, duration: 0.7 }, "-=0.6")
         .to(
           ".hero-cta",
           {
@@ -73,23 +91,31 @@ export function LandingClient({ isSignedIn }: Props) {
             stagger: 0.1,
             ease: "elastic.out(1, 0.55)",
           },
-          "-=0.3",
+          "-=0.5",
         );
 
-      // Floating shapes — random drift + slow rotation, looped.
+      // Slow drift on the hero glow so it never feels static.
+      gsap.to(".hero-glow", {
+        x: "+=40",
+        y: "+=20",
+        duration: 8,
+        ease: "sine.inOut",
+        yoyo: true,
+        repeat: -1,
+      });
+
+      // Floating shapes — large red cards spin slowly on their own
+      // axis at varied speeds and directions. data-spin / data-spin-dur
+      // attrs come from the JSX so per-card tuning lives next to the
+      // markup. Inner element handles spin; wrapper handles parallax.
       const shapes = gsap.utils.toArray<HTMLElement>(".float-shape");
       shapes.forEach((shape) => {
-        const dx = gsap.utils.random(-22, 22);
-        const dy = gsap.utils.random(-26, 26);
-        const dr = gsap.utils.random(-12, 12);
-        const dur = gsap.utils.random(5, 9);
+        const spin = Number(shape.dataset.spin ?? 360);
+        const dur = Number(shape.dataset.spinDur ?? 30);
         gsap.to(shape, {
-          x: `+=${dx}`,
-          y: `+=${dy}`,
-          rotation: `+=${dr}`,
+          rotation: `+=${spin}`,
           duration: dur,
-          ease: "sine.inOut",
-          yoyo: true,
+          ease: "none",
           repeat: -1,
         });
       });
@@ -226,6 +252,16 @@ export function LandingClient({ isSignedIn }: Props) {
         });
       });
 
+      // ===== TESTIMONIALS =====
+      gsap.from(".testimonial", {
+        y: 40,
+        opacity: 0,
+        duration: 0.75,
+        stagger: 0.12,
+        ease: "power3.out",
+        scrollTrigger: { trigger: ".testimonials", start: "top 80%" },
+      });
+
       // ===== FINAL CTA =====
       gsap.from(".final-word", {
         y: 32,
@@ -311,16 +347,33 @@ export function LandingClient({ isSignedIn }: Props) {
         style={{ padding: "28px 40px", position: "relative", zIndex: 5 }}
       >
         <Wordmark />
-        <nav style={{ display: "flex", gap: 28, fontSize: 14 }}>
+        <nav
+          style={{
+            display: "flex",
+            gap: 24,
+            fontSize: 14,
+            alignItems: "center",
+          }}
+        >
           <Link href="#how" className="lk-mute">
             How it works
           </Link>
           <Link href="/changelog" className="lk-mute">
             Changelog
           </Link>
-          <Link href="/sign-in" className="lk-mute">
-            Sign in
-          </Link>
+          {isSignedIn ? (
+            <Link
+              href="/dashboard"
+              className="pill pill-red"
+              style={{ padding: "9px 16px", fontSize: 14 }}
+            >
+              Go to Dashboard →
+            </Link>
+          ) : (
+            <Link href="/sign-in" className="lk-mute">
+              Sign in
+            </Link>
+          )}
         </nav>
       </header>
 
@@ -334,6 +387,27 @@ export function LandingClient({ isSignedIn }: Props) {
           overflow: "hidden",
         }}
       >
+        {/* Big red radial glow centered behind the headline. Lives
+            BEHIND floating shapes (z-index 0) so the cards still
+            drift on top of the haze. */}
+        <div
+          aria-hidden
+          className="hero-glow"
+          style={{
+            position: "absolute",
+            top: "50%",
+            left: "50%",
+            width: 600,
+            height: 600,
+            transform: "translate(-50%, -50%)",
+            background:
+              "radial-gradient(circle, rgba(220,38,38,0.18) 0%, rgba(220,38,38,0.06) 35%, transparent 70%)",
+            filter: "blur(80px)",
+            pointerEvents: "none",
+            zIndex: 0,
+            willChange: "transform, opacity",
+          }}
+        />
         <FloatingShapes />
 
         <div
@@ -368,12 +442,32 @@ export function LandingClient({ isSignedIn }: Props) {
             </span>
           ))}
         </h1>
+
+        {/* Red line that draws across after the headline. scaleX is
+            animated 0 → 1 from a transform-origin of the left edge,
+            which is the same visual as a strokeDashoffset draw on a
+            <line> but works on any element. */}
+        <div
+          aria-hidden
+          className="hero-line"
+          style={{
+            position: "relative",
+            zIndex: 2,
+            height: 2,
+            width: "100%",
+            background: "#DC2626",
+            marginTop: 36,
+            transformOrigin: "0% 50%",
+            willChange: "transform",
+          }}
+        />
+
         <div
           style={{
             display: "grid",
             gridTemplateColumns: "1fr 1fr",
             gap: 80,
-            marginTop: 80,
+            marginTop: 56,
             position: "relative",
             zIndex: 2,
           }}
@@ -412,7 +506,7 @@ export function LandingClient({ isSignedIn }: Props) {
         </div>
       </section>
 
-      <hr className="hr" />
+      <SectionDivider />
 
       {/* ============== PROBLEM ============== */}
       <section
@@ -444,7 +538,7 @@ export function LandingClient({ isSignedIn }: Props) {
         </div>
       </section>
 
-      <hr className="hr" />
+      <SectionDivider />
 
       {/* ============== HOW IT WORKS ============== */}
       <section
@@ -456,32 +550,51 @@ export function LandingClient({ isSignedIn }: Props) {
           How it works
         </div>
         <div
+          className="how-grid"
           style={{
             display: "grid",
-            gridTemplateColumns: "60px 1fr 1fr 1fr",
-            gap: 48,
+            gridTemplateColumns: "60px 1fr 1fr 1fr 1fr",
+            gap: 40,
           }}
         >
           <div />
           <Step
             n={1}
-            t="Drop your transcript"
-            b="Paste or upload any meeting notes. GPR reads every word."
+            t="Connect your project"
+            b="Create a project, invite your team, and link your GitHub repo. GPR starts watching from day one."
           />
           <Step
             n={2}
-            t="The ref analyses"
-            b="AI extracts who committed to what, who delivered, and who went quiet."
+            t="Run your meeting normally"
+            b="After any meeting, paste or upload the transcript. Voice notes, Zoom exports, copied Slack threads — GPR reads it all."
           />
           <Step
             n={3}
-            t="Cards are issued"
-            b="Yellow. Red. MVP. Automatically. No appeals. The ref's decision is final."
+            t="The ref calls it"
+            b="GPR extracts every commitment, scores every member, and issues cards automatically. Yellow for falling behind. Red for going dark. MVP for carrying the squad. No one decides. The AI does."
+          />
+          <Step
+            n={4}
+            t="Evidence builds over time"
+            b="Every meeting adds to your project knowledge base. Ask GPR anything — who committed to what, what was decided last Tuesday, who has been quiet for a week. The ref remembers everything."
           />
         </div>
+        <style>{`
+          @media (max-width: 1024px) {
+            .how-grid {
+              grid-template-columns: 60px 1fr 1fr !important;
+            }
+          }
+          @media (max-width: 640px) {
+            .how-grid {
+              grid-template-columns: 1fr !important;
+            }
+            .how-grid > div:first-child { display: none; }
+          }
+        `}</style>
       </section>
 
-      <hr className="hr" />
+      <SectionDivider />
 
       {/* ============== THREE CALLS — kept from existing layout ============== */}
       <section className="wrap" style={{ padding: "120px 40px" }}>
@@ -522,7 +635,7 @@ export function LandingClient({ isSignedIn }: Props) {
         </div>
       </section>
 
-      <hr className="hr" />
+      <SectionDivider />
 
       {/* ============== MATCH REPORT MOCKUP ============== */}
       <section className="wrap" style={{ padding: "120px 40px" }}>
@@ -603,6 +716,19 @@ export function LandingClient({ isSignedIn }: Props) {
             </div>
           </div>
 
+          <p
+            className="body match-summary"
+            style={{
+              margin: "0 0 18px",
+              color: "var(--ink-2, var(--ink))",
+              lineHeight: 1.55,
+              fontSize: 15,
+            }}
+          >
+            Two members carried the load. One has not delivered in eleven
+            days. Detailed verdict and commitments below.
+          </p>
+
           <MatchRow
             rank={1}
             name="Maya Chen"
@@ -632,10 +758,39 @@ export function LandingClient({ isSignedIn }: Props) {
             kind="r"
             isLast
           />
+
+          <div
+            style={{
+              marginTop: 22,
+              paddingTop: 18,
+              borderTop: "1px solid var(--line)",
+            }}
+          >
+            <div className="label" style={{ marginBottom: 12 }}>
+              Open commitments
+            </div>
+            <CommitmentLine
+              who="Maya"
+              text="Finalize the API contract by Thursday EOD."
+              due="Thu"
+              done
+            />
+            <CommitmentLine
+              who="Diego"
+              text="Migrate auth middleware before next stand-up."
+              due="Mon"
+            />
+            <CommitmentLine
+              who="Sam"
+              text="Send the stakeholder update with sprint metrics."
+              due="3 days ago"
+              overdue
+            />
+          </div>
         </div>
       </section>
 
-      <hr className="hr" />
+      <SectionDivider />
 
       {/* ============== SAMPLE DIGEST — kept from existing layout ============== */}
       <section
@@ -661,7 +816,7 @@ export function LandingClient({ isSignedIn }: Props) {
         </div>
       </section>
 
-      <hr className="hr" />
+      <SectionDivider />
 
       {/* ============== FEATURES GRID ============== */}
       <section
@@ -717,7 +872,62 @@ export function LandingClient({ isSignedIn }: Props) {
         </div>
       </section>
 
-      <hr className="hr" />
+      <SectionDivider />
+
+      {/* ============== TESTIMONIALS ============== */}
+      <section
+        className="testimonials wrap"
+        style={{ padding: "120px 40px" }}
+      >
+        <div className="label" style={{ marginBottom: 24 }}>
+          Field reports
+        </div>
+        <h2
+          className="display"
+          style={{
+            margin: 0,
+            marginBottom: 56,
+            fontSize: "clamp(36px, 5vw, 64px)",
+            fontWeight: 500,
+            lineHeight: 1.05,
+            maxWidth: 960,
+          }}
+        >
+          The ref keeps receipts.{" "}
+          <span className="mute-ink">People notice.</span>
+        </h2>
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(3, 1fr)",
+            gap: 20,
+          }}
+          className="testimonial-grid"
+        >
+          <Testimonial
+            quote="I used to be the one doing everything. Now I have proof."
+            name="Final year CS student"
+            role="University of Canterbury"
+          />
+          <Testimonial
+            quote="Our group project went from chaos to accountability in one meeting."
+            name="Product team"
+            role="Early-stage startup"
+          />
+          <Testimonial
+            quote="The red card on my teammate was the most satisfying thing I have ever seen."
+            name="Anonymous"
+            role="…but we know who"
+          />
+        </div>
+        <style>{`
+          @media (max-width: 880px) {
+            .testimonial-grid { grid-template-columns: 1fr !important; }
+          }
+        `}</style>
+      </section>
+
+      <SectionDivider />
 
       {/* ============== FINAL CTA ============== */}
       <section
@@ -789,19 +999,7 @@ export function LandingClient({ isSignedIn }: Props) {
         </div>
       </section>
 
-      <footer
-        style={{
-          padding: 40,
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          color: "var(--mute)",
-          fontSize: 13,
-        }}
-      >
-        <Wordmark small />
-        <span>© {new Date().getFullYear()} GPR · Group Project Referee</span>
-      </footer>
+      <PublicFooter />
     </main>
   );
 }
@@ -982,6 +1180,162 @@ function Feature({ title, copy }: { title: string; copy: string }) {
   );
 }
 
+function Testimonial({
+  quote,
+  name,
+  role,
+}: {
+  quote: string;
+  name: string;
+  role: string;
+}) {
+  return (
+    <figure
+      className="testimonial"
+      style={{
+        margin: 0,
+        padding: "26px 24px",
+        border: "1px solid var(--line)",
+        borderRadius: 12,
+        background: "var(--paper)",
+        position: "relative",
+        transition:
+          "transform 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease",
+      }}
+      onMouseEnter={(e) => {
+        e.currentTarget.style.transform = "translateY(-4px)";
+        e.currentTarget.style.borderColor = "var(--red)";
+        e.currentTarget.style.boxShadow =
+          "0 18px 40px -22px rgba(225, 6, 0, 0.35)";
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.transform = "";
+        e.currentTarget.style.borderColor = "";
+        e.currentTarget.style.boxShadow = "";
+      }}
+    >
+      <span
+        aria-hidden
+        style={{
+          position: "absolute",
+          top: 18,
+          right: 22,
+          fontSize: 38,
+          lineHeight: 1,
+          color: "var(--red)",
+          fontFamily: "Georgia, serif",
+          opacity: 0.55,
+        }}
+      >
+        &ldquo;
+      </span>
+      <blockquote
+        style={{
+          margin: "0 0 18px",
+          fontSize: 16,
+          lineHeight: 1.55,
+          color: "var(--ink)",
+          fontWeight: 500,
+          paddingRight: 16,
+        }}
+      >
+        &ldquo;{quote}&rdquo;
+      </blockquote>
+      <figcaption
+        style={{ display: "flex", flexDirection: "column", gap: 2 }}
+      >
+        <span
+          style={{
+            fontSize: 13,
+            fontWeight: 600,
+            color: "var(--ink)",
+          }}
+        >
+          {name}
+        </span>
+        <span className="mute-ink" style={{ fontSize: 12 }}>
+          {role}
+        </span>
+      </figcaption>
+    </figure>
+  );
+}
+
+function CommitmentLine({
+  who,
+  text,
+  due,
+  overdue,
+  done,
+}: {
+  who: string;
+  text: string;
+  due: string;
+  overdue?: boolean;
+  done?: boolean;
+}) {
+  const dueColor = done
+    ? "var(--mute)"
+    : overdue
+      ? "var(--red)"
+      : "var(--ink)";
+  return (
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: "16px minmax(0, 1fr) auto",
+        gap: 12,
+        padding: "8px 0",
+        alignItems: "center",
+      }}
+    >
+      <span
+        aria-hidden
+        style={{
+          width: 10,
+          height: 10,
+          borderRadius: 999,
+          background: done
+            ? "var(--mute, #9ca3af)"
+            : overdue
+              ? "var(--red)"
+              : "var(--ink)",
+          opacity: done ? 0.6 : 1,
+          marginLeft: 3,
+        }}
+      />
+      <span
+        style={{
+          fontSize: 14,
+          color: done ? "var(--mute)" : "var(--ink)",
+          textDecoration: done ? "line-through" : "none",
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+        }}
+      >
+        <span style={{ fontWeight: 600 }}>{who}</span>
+        <span className="mute-ink" style={{ fontWeight: 400 }}>
+          {" "}
+          — {text}
+        </span>
+      </span>
+      <span
+        className="num"
+        style={{
+          fontSize: 12,
+          fontWeight: 600,
+          color: dueColor,
+          letterSpacing: "0.04em",
+          whiteSpace: "nowrap",
+        }}
+      >
+        {due}
+      </span>
+    </div>
+  );
+}
+
 function MatchRow({
   rank,
   name,
@@ -1068,58 +1422,47 @@ function MatchRow({
 }
 
 function FloatingShapes() {
-  // 6 subtle drifting accents behind the hero. Each lives inside a
-  // wrapper so mouse-parallax can translate the wrapper while the
-  // inner element keeps its own continuous floating tween.
+  // Three big semi-transparent red referee-card silhouettes behind
+  // the hero. Each lives inside a wrapper so mouse-parallax can
+  // translate the wrapper while the inner element rotates on its
+  // own axis with a continuous tween. Heights drive the card
+  // proportions (RefCard renders 0.72 ratio).
   const shapes: Array<{
     top: string;
     left?: string;
     right?: string;
     rotate: number;
-    el: React.ReactNode;
+    size: number;
     opacity: number;
+    spin: number; // degrees per cycle (signed for direction)
+    spinDur: number; // seconds
   }> = [
     {
-      top: "8%",
-      left: "4%",
-      rotate: -14,
-      opacity: 0.18,
-      el: <RefCard kind="y" size={54} />,
-    },
-    {
-      top: "18%",
-      right: "8%",
-      rotate: 12,
-      opacity: 0.16,
-      el: <RedSquare size={42} />,
+      top: "10%",
+      left: "-2%",
+      rotate: -10,
+      size: 150,
+      opacity: 0.11,
+      spin: 360,
+      spinDur: 28,
     },
     {
       top: "55%",
-      left: "10%",
-      rotate: 0,
-      opacity: 0.14,
-      el: <RedSquare size={28} />,
+      right: "-2%",
+      rotate: 14,
+      size: 130,
+      opacity: 0.1,
+      spin: -360,
+      spinDur: 36,
     },
     {
-      top: "62%",
-      right: "14%",
-      rotate: 18,
-      opacity: 0.2,
-      el: <RefCard kind="mvp" size={48} />,
-    },
-    {
-      top: "82%",
-      left: "20%",
-      rotate: -6,
-      opacity: 0.16,
-      el: <RefCard kind="r" size={42} />,
-    },
-    {
-      top: "78%",
-      right: "30%",
-      rotate: 9,
-      opacity: 0.14,
-      el: <RefCard kind="y" size={36} />,
+      top: "70%",
+      left: "12%",
+      rotate: -4,
+      size: 90,
+      opacity: 0.08,
+      spin: 360,
+      spinDur: 22,
     },
   ];
   return (
@@ -1147,13 +1490,15 @@ function FloatingShapes() {
         >
           <span
             className="float-shape"
+            data-spin={s.spin}
+            data-spin-dur={s.spinDur}
             style={{
               display: "inline-block",
               transform: `rotate(${s.rotate}deg)`,
               willChange: "transform",
             }}
           >
-            {s.el}
+            <BigRedCard size={s.size} />
           </span>
         </span>
       ))}
@@ -1161,15 +1506,34 @@ function FloatingShapes() {
   );
 }
 
-function RedSquare({ size }: { size: number }) {
+function SectionDivider() {
+  return (
+    <div
+      aria-hidden
+      style={{
+        height: 1,
+        margin: "0 0",
+        background:
+          "linear-gradient(90deg, transparent 0%, rgba(220,38,38,0.55) 50%, transparent 100%)",
+        opacity: 0.7,
+      }}
+    />
+  );
+}
+
+function BigRedCard({ size }: { size: number }) {
+  // Same proportions as RefCard but pure red — meant as a large
+  // semi-transparent silhouette in the hero background.
+  const w = Math.round(size * 0.72);
+  const h = size;
   return (
     <span
       style={{
         display: "inline-block",
-        width: size,
-        height: size,
-        background: "var(--red)",
-        borderRadius: 4,
+        width: w,
+        height: h,
+        background: "#DC2626",
+        borderRadius: 6,
       }}
     />
   );
