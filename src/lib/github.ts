@@ -14,6 +14,11 @@ export type GhCommit = {
   html_url: string;
 };
 
+export type GhBranch = {
+  name: string;
+  commit: { sha: string };
+};
+
 export type GhPullRequest = {
   number: number;
   title: string;
@@ -31,20 +36,39 @@ const HEADERS: HeadersInit = {
   "User-Agent": "GPR/1.0",
 };
 
-export async function fetchCommits(
+export async function fetchBranches(
   owner: string,
   repo: string,
-  since?: Date,
-): Promise<GhCommit[]> {
-  const url = new URL(`https://api.github.com/repos/${owner}/${repo}/commits`);
-  url.searchParams.set("per_page", "100");
-  if (since) url.searchParams.set("since", since.toISOString());
+): Promise<GhBranch[]> {
+  const url = new URL(`https://api.github.com/repos/${owner}/${repo}/branches`);
+  url.searchParams.set("per_page", "30");
 
   const res = await fetch(url, { headers: HEADERS, cache: "no-store" });
   if (!res.ok) {
     const body = await res.text();
     throw new Error(
-      `GitHub commits ${owner}/${repo}: ${res.status} ${res.statusText} — ${body.slice(0, 200)}`,
+      `GitHub branches ${owner}/${repo}: ${res.status} ${res.statusText} — ${body.slice(0, 200)}`,
+    );
+  }
+  return (await res.json()) as GhBranch[];
+}
+
+export async function fetchCommits(
+  owner: string,
+  repo: string,
+  since?: Date,
+  branch?: string,
+): Promise<GhCommit[]> {
+  const url = new URL(`https://api.github.com/repos/${owner}/${repo}/commits`);
+  url.searchParams.set("per_page", "100");
+  if (since) url.searchParams.set("since", since.toISOString());
+  if (branch) url.searchParams.set("sha", branch);
+
+  const res = await fetch(url, { headers: HEADERS, cache: "no-store" });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(
+      `GitHub commits ${owner}/${repo}@${branch ?? "default"}: ${res.status} ${res.statusText} — ${body.slice(0, 200)}`,
     );
   }
   return (await res.json()) as GhCommit[];
