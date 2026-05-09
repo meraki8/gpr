@@ -20,6 +20,11 @@ import {
 import { CAPABILITIES, resolveCapability } from "@/lib/capabilities";
 import { recomputeMemberScores } from "@/lib/scoring";
 import { recordProjectHealthSnapshot } from "@/lib/health";
+import {
+  NOTIFICATION_TYPES,
+  cardNotificationBody,
+  notifyUsers,
+} from "@/lib/notifications";
 
 const InviteSchema = z.object({
   projectId: z.string().min(1),
@@ -112,6 +117,31 @@ export async function inviteMember(formData: FormData) {
     projectBrief: project.brief,
     inviteUrl: `${getBaseUrl()}/invite/${token}`,
   });
+
+  // If the invitee already has an account, drop a bell notification
+  // so they see it next time they're in GPR. Best-effort.
+  if (existingUser) {
+    try {
+      const groupRecord = await db.group.findUnique({
+        where: { id: project.groupId },
+        select: { name: true },
+      });
+      await notifyUsers([
+        {
+          userId: existingUser.id,
+          projectId,
+          type: NOTIFICATION_TYPES.INVITE,
+          title: `${user.name ?? user.email} invited you to ${project.name}`,
+          body: groupRecord
+            ? `Project lives in ${groupRecord.name}.`
+            : project.brief.slice(0, 200),
+          linkUrl: `/invite/${token}`,
+        },
+      ]);
+    } catch (err) {
+      console.error("[notifications] invite create failed:", err);
+    }
+  }
 
   revalidatePath(`/projects/${projectId}`);
 }
@@ -506,6 +536,39 @@ export async function analyzeTranscript(formData: FormData) {
     } catch (err) {
       console.error("Failed to persist KB entries from transcript:", err);
     }
+  }
+
+  // 6.5. Notifications. Each carded member gets a card notification;
+  // every project member gets a "new match report" notification with
+  // a link to the report. Best-effort — wrapped so a failure here
+  // never rolls back the analysis the user just paid for.
+  try {
+    const reportLink = `/projects/${projectId}/reports/${matchReport.id}`;
+    const cardRows = analysis.cards.map((c) => {
+      const copy = cardNotificationBody(c.card_type, project.name, c.reason);
+      return {
+        userId: c.user_id,
+        projectId,
+        type: NOTIFICATION_TYPES.CARD,
+        title: copy.title,
+        body: copy.body,
+        linkUrl: reportLink,
+      };
+    });
+    const reportRows = project.members.map((m) => ({
+      userId: m.user.id,
+      projectId,
+      type: NOTIFICATION_TYPES.REPORT,
+      title: `New match report in ${project.name}`,
+      body:
+        analysis.summary.length > 200
+          ? `${analysis.summary.slice(0, 197)}…`
+          : analysis.summary,
+      linkUrl: reportLink,
+    }));
+    await notifyUsers([...cardRows, ...reportRows]);
+  } catch (err) {
+    console.error("[notifications] analysis fan-out failed:", err);
   }
 
   // 7. Recompute cumulative scores now that this report's

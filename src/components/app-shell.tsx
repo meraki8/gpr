@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import type { ReactNode } from "react";
 import { AskGprPanel } from "./ask-gpr-panel";
+import { NotificationsBell } from "./notifications-bell";
 
 type SidebarGroup = { id: string; name: string };
 type SidebarProject = {
@@ -411,6 +412,7 @@ export function AppShell({
           minHeight: "100vh",
         }}
       >
+        <NotificationsBell />
         {children}
         {/* Ask GPR is project-scoped — only mount on project pages.
             Trigger button is fixed bottom-right; panel slides in from
