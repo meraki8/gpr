@@ -172,7 +172,19 @@ export default async function KnowledgeBasePage({
                 : "No knowledge entries yet."}
             </p>
           ) : (
-            entries.map((e, i) => (
+            entries.map(
+              (
+                e: {
+                  id: string;
+                  source: string;
+                  sourceRefId: string | null;
+                  sourceTypeLabel: string | null;
+                  title: string;
+                  content: string;
+                  createdAt: Date;
+                },
+                i: number,
+              ) => (
               <article
                 key={e.id}
                 className="fade-up"
