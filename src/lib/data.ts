@@ -122,10 +122,6 @@ export async function getGroup(groupId: string) {
       ],
     },
     include: {
-      members: {
-        include: { user: true },
-        orderBy: { joinedAt: "asc" },
-      },
       // Only show projects the user actually has access to — don't leak
       // other projects in the group.
       projects: {
@@ -136,7 +132,24 @@ export async function getGroup(groupId: string) {
     },
   });
   if (!group) notFound();
-  return group;
+
+  // Derive effective members from the union of all project members across
+  // the group's visible projects. GroupMember is not kept in sync when
+  // project invites are accepted, so we read ProjectMember as the source
+  // of truth.
+  const projectMembers = await db.projectMember.findMany({
+    where: { projectId: { in: group.projects.map((p) => p.id) } },
+    include: { user: true },
+    orderBy: { joinedAt: "asc" },
+  });
+  const seenUserIds = new Set<string>();
+  const uniqueMembers = projectMembers.filter((m) => {
+    if (seenUserIds.has(m.userId)) return false;
+    seenUserIds.add(m.userId);
+    return true;
+  });
+
+  return { ...group, members: uniqueMembers };
 }
 
 // Powers the redesigned project overview / command-centre page.
