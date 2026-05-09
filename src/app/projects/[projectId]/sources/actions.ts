@@ -224,14 +224,79 @@ export async function syncGithubSource(formData: FormData) {
   const parsed = SyncSchema.safeParse({
     projectId: formData.get("projectId"),
   });
-  if (!parsed.success) throw new Error("Invalid input");
+  if (!parsed.success) {
+    console.error("[syncGithubSource] invalid input:", {
+      userId: user.id,
+      issues: parsed.error.issues,
+    });
+    throw new Error("Invalid input");
+  }
 
   const { projectId } = parsed.data;
-  await requireMember(projectId, user.id);
 
-  const summary = await syncGithubProject(projectId);
-  if (summary.errors.length > 0 && summary.repos === 0) {
-    throw new Error(summary.errors[0]);
+  try {
+    await requireMember(projectId, user.id);
+
+    console.log("[syncGithubSource] start:", {
+      userId: user.id,
+      projectId,
+    });
+
+    const summary = await syncGithubProject(projectId);
+
+    console.log("[syncGithubSource] done:", {
+      userId: user.id,
+      projectId,
+      repos: summary.repos,
+      commits: summary.commits,
+      pullRequests: summary.pullRequests,
+      errorCount: summary.errors.length,
+      firstError: summary.errors[0] ?? null,
+    });
+
+    if (summary.errors.length > 0 && summary.repos === 0) {
+      throw new Error(summary.errors[0]);
+    }
+  } catch (err) {
+    // Surface the failure to the page banner via configJson, then
+    // rethrow so the form action visibly fails instead of pretending
+    // the sync succeeded.
+    const message =
+      err instanceof Error ? err.message : "GitHub sync failed";
+    console.error("[syncGithubSource] failed:", {
+      userId: user.id,
+      projectId,
+      message,
+      stack: err instanceof Error ? err.stack : undefined,
+    });
+    try {
+      const source = await db.contributionSource.findUnique({
+        where: {
+          projectId_sourceType: { projectId, sourceType: "GITHUB" },
+        },
+      });
+      if (source) {
+        const config =
+          (source.configJson as GithubConfig | null) ?? {};
+        await db.contributionSource.update({
+          where: { id: source.id },
+          data: {
+            configJson: {
+              ...config,
+              lastSyncError: message.slice(0, 1200),
+              lastSyncOkAt: null,
+            },
+          },
+        });
+        revalidatePath(`/projects/${projectId}/sources/github`);
+      }
+    } catch (writeErr) {
+      console.error(
+        "[syncGithubSource] failed to persist lastSyncError:",
+        writeErr instanceof Error ? writeErr.message : writeErr,
+      );
+    }
+    throw err;
   }
 
   revalidatePath(`/projects/${projectId}/sources/github`);

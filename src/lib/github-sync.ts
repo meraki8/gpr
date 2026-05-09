@@ -1,5 +1,6 @@
 import "server-only";
 
+import { Prisma } from "@prisma/client";
 import { db } from "./db";
 import { ai, AI_MODEL } from "./ai";
 import {
@@ -343,6 +344,7 @@ async function checkMergedPrJiraDone(input: {
 export async function syncGithubProject(
   projectId: string,
 ): Promise<GithubSyncSummary> {
+  console.log("[syncGithubProject] enter:", { projectId });
   const summary: GithubSyncSummary = {
     projectId,
     repos: 0,
@@ -353,9 +355,17 @@ export async function syncGithubProject(
     errors: [],
   };
 
-  const source = await db.contributionSource.findUnique({
-    where: { projectId_sourceType: { projectId, sourceType: "GITHUB" } },
-  });
+  let source;
+  try {
+    source = await db.contributionSource.findUnique({
+      where: { projectId_sourceType: { projectId, sourceType: "GITHUB" } },
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "lookup failed";
+    console.error("[syncGithubProject] source lookup failed:", msg);
+    summary.errors.push(`GitHub source lookup: ${msg}`);
+    return summary;
+  }
   if (!source || !source.enabled) {
     summary.errors.push("No GitHub source configured");
     return summary;
@@ -370,10 +380,20 @@ export async function syncGithubProject(
     return summary;
   }
 
-  const identities = await db.sourceIdentity.findMany({
-    where: { projectId, sourceType: "GITHUB" },
-    include: { projectMember: true },
-  });
+  type IdentityWithMember = Prisma.SourceIdentityGetPayload<{
+    include: { projectMember: true };
+  }>;
+  let identities: IdentityWithMember[] = [];
+  try {
+    identities = await db.sourceIdentity.findMany({
+      where: { projectId, sourceType: "GITHUB" },
+      include: { projectMember: true },
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "lookup failed";
+    console.error("[syncGithubProject] identity lookup failed:", msg);
+    summary.errors.push(`Identity lookup: ${msg}`);
+  }
   const usernameToUserId = new Map(
     identities.map((i) => [
       i.externalId.toLowerCase(),
