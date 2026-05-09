@@ -289,20 +289,20 @@ export function AppShell({
                 </div>
               )}
               <SidebarItem
-                href={`/projects/${currentProject.id}/sources`}
+                href={`/projects/${currentProject.id}/sources/github`}
                 label="GitHub"
                 icon={<GitBranch size={16} />}
                 active={pathname.startsWith(
-                  `/projects/${currentProject.id}/sources`,
+                  `/projects/${currentProject.id}/sources/github`,
                 )}
                 collapsed={collapsed}
               />
               <SidebarItem
-                href={`/projects/${currentProject.id}/jira`}
+                href={`/projects/${currentProject.id}/sources/jira`}
                 label="Jira"
                 icon={<SquareKanban size={16} />}
                 active={pathname.startsWith(
-                  `/projects/${currentProject.id}/jira`,
+                  `/projects/${currentProject.id}/sources/jira`,
                 )}
                 collapsed={collapsed}
               />

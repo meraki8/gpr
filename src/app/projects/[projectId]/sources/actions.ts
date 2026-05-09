@@ -81,7 +81,7 @@ export async function addGithubRepo(formData: FormData) {
     });
   }
 
-  revalidatePath(`/projects/${projectId}/sources`);
+  revalidatePath(`/projects/${projectId}/sources/github`);
 }
 
 const RemoveRepoSchema = z.object({
@@ -114,7 +114,7 @@ export async function removeGithubRepo(formData: FormData) {
     data: { configJson: { repos: newRepos } },
   });
 
-  revalidatePath(`/projects/${projectId}/sources`);
+  revalidatePath(`/projects/${projectId}/sources/github`);
 }
 
 const IdentitySchema = z.object({
@@ -159,7 +159,7 @@ export async function setGithubUsername(formData: FormData) {
     update: { externalId, verified: false },
   });
 
-  revalidatePath(`/projects/${projectId}/sources`);
+  revalidatePath(`/projects/${projectId}/sources/github`);
 }
 
 const SyncSchema = z.object({
@@ -318,7 +318,7 @@ export async function syncGithubSource(formData: FormData) {
     console.error("Failed to recompute member scores:", err);
   }
 
-  revalidatePath(`/projects/${projectId}/sources`);
+  revalidatePath(`/projects/${projectId}/sources/github`);
   revalidatePath(`/projects/${projectId}`);
   revalidatePath(`/projects/${projectId}/kb`);
   revalidatePath(`/projects/${projectId}/leaderboard`);
@@ -404,8 +404,8 @@ export async function connectJira(formData: FormData) {
     });
   }
 
-  revalidatePath(`/projects/${projectId}/jira`);
-  revalidatePath(`/projects/${projectId}/sources`);
+  revalidatePath(`/projects/${projectId}/sources/jira`);
+  revalidatePath(`/projects/${projectId}/sources/github`);
 }
 
 const JiraDisconnectSchema = z.object({ projectId: z.string().min(1) });
@@ -422,8 +422,8 @@ export async function disconnectJira(formData: FormData) {
     where: { projectId, sourceType: "JIRA" },
   });
 
-  revalidatePath(`/projects/${projectId}/jira`);
-  revalidatePath(`/projects/${projectId}/sources`);
+  revalidatePath(`/projects/${projectId}/sources/jira`);
+  revalidatePath(`/projects/${projectId}/sources/github`);
 }
 
 const JiraIdentitySchema = z.object({
@@ -457,8 +457,8 @@ export async function setJiraAccountId(formData: FormData) {
     update: { externalId, verified: false },
   });
 
-  revalidatePath(`/projects/${projectId}/jira`);
-  revalidatePath(`/projects/${projectId}/sources`);
+  revalidatePath(`/projects/${projectId}/sources/jira`);
+  revalidatePath(`/projects/${projectId}/sources/github`);
 }
 
 const SyncJiraSchema = z.object({ projectId: z.string().min(1) });
@@ -479,7 +479,7 @@ export async function syncJiraSource(formData: FormData) {
     throw new Error(summary.errors[0]);
   }
 
-  revalidatePath(`/projects/${projectId}/jira`);
+  revalidatePath(`/projects/${projectId}/sources/jira`);
   revalidatePath(`/projects/${projectId}`);
   revalidatePath(`/projects/${projectId}/kb`);
   revalidatePath(`/projects/${projectId}/leaderboard`);

@@ -8,7 +8,7 @@ import {
   removeGithubRepo,
   setGithubUsername,
   syncGithubSource,
-} from "./actions";
+} from "../actions";
 
 export default async function SourcesPage({
   params,
