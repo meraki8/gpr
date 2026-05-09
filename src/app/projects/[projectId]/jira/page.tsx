@@ -138,7 +138,9 @@ export default async function JiraPage({
               Jira
             </h2>
             <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
-              {isOwner && isConnectedWithApi && (
+              {/* Sync is open to any member; Disconnect stays
+                  owner-only since it's destructive. */}
+              {isConnectedWithApi && (
                 <form action={syncJiraSource}>
                   <input type="hidden" name="projectId" value={projectId} />
                   <button type="submit" className="pill pill-red">

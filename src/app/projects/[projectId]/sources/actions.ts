@@ -17,6 +17,17 @@ async function requireOwner(projectId: string, userId: string) {
   if (!member) throw new Error("FORBIDDEN");
 }
 
+// Any member of this project can configure / sync a source. Per
+// product philosophy: no unnecessary owner gates. Reserve owner-only
+// for destructive actions (removeGithubRepo, disconnectJira).
+async function requireMember(projectId: string, userId: string) {
+  const member = await db.projectMember.findFirst({
+    where: { projectId, userId, project: { deletedAt: null } },
+    select: { id: true },
+  });
+  if (!member) throw new Error("FORBIDDEN");
+}
+
 const RepoSchema = z.object({
   projectId: z.string().min(1),
   repo: z
@@ -39,7 +50,7 @@ export async function addGithubRepo(formData: FormData) {
   }
 
   const { projectId, repo } = parsed.data;
-  await requireOwner(projectId, user.id);
+  await requireMember(projectId, user.id);
 
   const existing = await db.contributionSource.findUnique({
     where: { projectId_sourceType: { projectId, sourceType: "GITHUB" } },
@@ -124,7 +135,7 @@ export async function setGithubUsername(formData: FormData) {
   }
 
   const { projectId, projectMemberId, externalId } = parsed.data;
-  await requireOwner(projectId, user.id);
+  await requireMember(projectId, user.id);
 
   const member = await db.projectMember.findFirst({
     where: { id: projectMemberId, projectId },
@@ -163,7 +174,7 @@ export async function syncGithubSource(formData: FormData) {
   if (!parsed.success) throw new Error("Invalid input");
 
   const { projectId } = parsed.data;
-  await requireOwner(projectId, user.id);
+  await requireMember(projectId, user.id);
 
   const source = await db.contributionSource.findUnique({
     where: { projectId_sourceType: { projectId, sourceType: "GITHUB" } },
@@ -359,7 +370,7 @@ export async function connectJira(formData: FormData) {
     jiraEmail,
     jiraApiToken,
   } = parsed.data;
-  await requireOwner(projectId, user.id);
+  await requireMember(projectId, user.id);
 
   const baseUrl = normaliseJiraBaseUrl(jiraBaseUrl);
 
@@ -433,7 +444,7 @@ export async function setJiraAccountId(formData: FormData) {
   }
 
   const { projectId, projectMemberId, externalId } = parsed.data;
-  await requireOwner(projectId, user.id);
+  await requireMember(projectId, user.id);
 
   const member = await db.projectMember.findFirst({
     where: { id: projectMemberId, projectId },
@@ -460,7 +471,7 @@ export async function syncJiraSource(formData: FormData) {
   if (!parsed.success) throw new Error("Invalid input");
 
   const { projectId } = parsed.data;
-  await requireOwner(projectId, user.id);
+  await requireMember(projectId, user.id);
 
   const summary = await syncJiraProject(projectId);
 
