@@ -7,7 +7,8 @@ import { Score } from "@/components/score";
 import { ResendInviteButton } from "@/components/resend-invite-button";
 import { requireDbUser } from "@/lib/auth";
 import { getNavContext, getProjectMembers } from "@/lib/data";
-import { cancelInvite, inviteMember } from "../actions";
+import { InviteForm } from "@/components/invite-form";
+import { cancelInvite } from "../actions";
 
 export default async function MembersPage({
   params,
@@ -45,20 +46,7 @@ export default async function MembersPage({
           }
           right={
             viewerIsOwner ? (
-              <form action={inviteMember} style={{ display: "flex", gap: 10 }}>
-                <input type="hidden" name="projectId" value={project.id} />
-                <input
-                  type="email"
-                  name="email"
-                  placeholder="teammate@example.com"
-                  required
-                  className="field"
-                  style={{ width: 240 }}
-                />
-                <button type="submit" className="pill pill-sm">
-                  Invite →
-                </button>
-              </form>
+              <InviteForm projectId={project.id} />
             ) : null
           }
         />

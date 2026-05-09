@@ -29,6 +29,18 @@ const InviteSchema = z.object({
     .email("Valid email address required"),
 });
 
+export async function inviteMemberAction(
+  _prevState: { error: string } | null,
+  formData: FormData,
+): Promise<{ error: string } | null> {
+  try {
+    await inviteMember(formData);
+    return null;
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : "Failed to send invite" };
+  }
+}
+
 export async function inviteMember(formData: FormData) {
   const user = await requireDbUser();
 
