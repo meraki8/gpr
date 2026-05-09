@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { AppHeader } from "@/components/app-header";
 import { getProject } from "@/lib/data";
+import { inviteMember } from "./actions";
 
 export default async function ProjectPage({
   params,
@@ -104,6 +105,31 @@ export default async function ProjectPage({
             </li>
           ))}
         </ul>
+
+        <div className="border-t border-white/10 pt-8 mb-12">
+          <h2 className="text-sm font-mono uppercase tracking-widest text-white/60 mb-4">
+            Invite a member
+          </h2>
+          <form action={inviteMember} className="flex gap-2 max-w-md">
+            <input type="hidden" name="projectId" value={project.id} />
+            <input
+              type="email"
+              name="email"
+              placeholder="teammate@example.com"
+              required
+              className="flex-1 bg-black border border-white/20 px-4 py-2 focus:border-[#DC2626] focus:outline-none"
+            />
+            <button
+              type="submit"
+              className="bg-[#DC2626] text-white px-5 py-2 font-medium hover:bg-[#B91C1C] transition"
+            >
+              Send invite
+            </button>
+          </form>
+          <p className="text-xs text-white/40 mt-2 font-mono">
+            Recipient gets an email with a 7-day accept link.
+          </p>
+        </div>
 
         <div className="border-t border-white/10 pt-8 grid gap-4">
           <div className="border border-dashed border-white/20 px-6 py-12 text-center">
