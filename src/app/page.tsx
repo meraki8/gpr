@@ -20,6 +20,9 @@ export default async function HomePage() {
           <Link href="#how" className="lk-mute">
             How it works
           </Link>
+          <Link href="/changelog" className="lk-mute">
+            Changelog
+          </Link>
           <Link href="/sign-in" className="lk-mute">
             Sign in
           </Link>

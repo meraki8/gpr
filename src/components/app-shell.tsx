@@ -17,6 +17,7 @@ import {
   Sun,
   Trophy,
   Users,
+  Zap,
 } from "lucide-react";
 import type { ReactNode } from "react";
 import { AskGprPanel } from "./ask-gpr-panel";
@@ -268,6 +269,17 @@ export function AppShell({
             </nav>
           </div>
         )}
+
+        {/* Changelog */}
+        <div style={{ marginTop: 14 }}>
+          <SidebarItem
+            href="/changelog"
+            label="Changelog"
+            icon={<Zap size={16} />}
+            active={pathname === "/changelog"}
+            collapsed={collapsed}
+          />
+        </div>
 
         {/* Bottom controls */}
         <div
