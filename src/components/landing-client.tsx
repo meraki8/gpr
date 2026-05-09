@@ -6,6 +6,7 @@ import { gsap } from "gsap";
 import { ScrollTrigger } from "gsap/ScrollTrigger";
 import { Wordmark } from "@/components/wordmark";
 import { RefCard, type RefCardKind } from "@/components/ref-card";
+import { PublicFooter } from "@/components/public-footer";
 
 if (typeof window !== "undefined") {
   gsap.registerPlugin(ScrollTrigger);
@@ -453,29 +454,48 @@ export function LandingClient({ isSignedIn }: Props) {
           How it works
         </div>
         <div
+          className="how-grid"
           style={{
             display: "grid",
-            gridTemplateColumns: "60px 1fr 1fr 1fr",
-            gap: 48,
+            gridTemplateColumns: "60px 1fr 1fr 1fr 1fr",
+            gap: 40,
           }}
         >
           <div />
           <Step
             n={1}
-            t="Drop your transcript"
-            b="Paste or upload any meeting notes. GPR reads every word."
+            t="Connect your project"
+            b="Create a project, invite your team, and link your GitHub repo. GPR starts watching from day one."
           />
           <Step
             n={2}
-            t="The ref analyses"
-            b="AI extracts who committed to what, who delivered, and who went quiet."
+            t="Run your meeting normally"
+            b="After any meeting, paste or upload the transcript. Voice notes, Zoom exports, copied Slack threads — GPR reads it all."
           />
           <Step
             n={3}
-            t="Cards are issued"
-            b="Yellow. Red. MVP. Automatically. No appeals. The ref's decision is final."
+            t="The ref calls it"
+            b="GPR extracts every commitment, scores every member, and issues cards automatically. Yellow for falling behind. Red for going dark. MVP for carrying the squad. No one decides. The AI does."
+          />
+          <Step
+            n={4}
+            t="Evidence builds over time"
+            b="Every meeting adds to your project knowledge base. Ask GPR anything — who committed to what, what was decided last Tuesday, who has been quiet for a week. The ref remembers everything."
           />
         </div>
+        <style>{`
+          @media (max-width: 1024px) {
+            .how-grid {
+              grid-template-columns: 60px 1fr 1fr !important;
+            }
+          }
+          @media (max-width: 640px) {
+            .how-grid {
+              grid-template-columns: 1fr !important;
+            }
+            .how-grid > div:first-child { display: none; }
+          }
+        `}</style>
       </section>
 
       <hr className="hr" />
@@ -786,19 +806,7 @@ export function LandingClient({ isSignedIn }: Props) {
         </div>
       </section>
 
-      <footer
-        style={{
-          padding: 40,
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          color: "var(--mute)",
-          fontSize: 13,
-        }}
-      >
-        <Wordmark small />
-        <span>© {new Date().getFullYear()} GPR · Group Project Referee</span>
-      </footer>
+      <PublicFooter />
     </main>
   );
 }
