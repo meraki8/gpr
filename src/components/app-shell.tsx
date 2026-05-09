@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 import { UserButton } from "@clerk/nextjs";
 import {
   BookOpen,
+  Bot,
   ChevronDown,
   FileText,
   Flag,
@@ -251,6 +252,15 @@ export function AppShell({
                 icon={<GitBranch size={16} />}
                 active={pathname.startsWith(
                   `/projects/${currentProject.id}/sources`,
+                )}
+                collapsed={collapsed}
+              />
+              <SidebarItem
+                href={`/projects/${currentProject.id}/ask`}
+                label="Ask GPR"
+                icon={<Bot size={16} />}
+                active={pathname.startsWith(
+                  `/projects/${currentProject.id}/ask`,
                 )}
                 collapsed={collapsed}
               />
