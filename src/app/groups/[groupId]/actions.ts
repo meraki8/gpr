@@ -31,11 +31,19 @@ export async function createProject(formData: FormData) {
 
   const { groupId, name, brief, deadline } = parsed.data;
 
-  // Auth: caller must be a member of the group.
-  const membership = await db.groupMember.findUnique({
-    where: { groupId_userId: { groupId, userId: user.id } },
-  });
-  if (!membership) {
+  // Auth: caller must be a member of the group OR the group's
+  // owner. Owners aren't always seeded into GroupMember, so a
+  // membership-only check locks them out of their own group.
+  const [membership, group] = await Promise.all([
+    db.groupMember.findUnique({
+      where: { groupId_userId: { groupId, userId: user.id } },
+    }),
+    db.group.findUnique({
+      where: { id: groupId },
+      select: { ownerId: true },
+    }),
+  ]);
+  if (!membership && group?.ownerId !== user.id) {
     throw new Error("FORBIDDEN");
   }
 
