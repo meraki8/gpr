@@ -142,7 +142,7 @@ export default async function SourcesPage({
             </ul>
           )}
 
-          {isOwner && (
+          {isOwner && githubRepos.length === 0 && (
             <form
               action={addGithubRepo}
               style={{ display: "flex", gap: 10, maxWidth: 480 }}
