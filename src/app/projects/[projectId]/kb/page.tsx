@@ -2,7 +2,7 @@ import { AppShell } from "@/components/app-shell";
 import { KnowledgeBaseExplorer } from "@/components/knowledge-base-explorer";
 import { PageHead } from "@/components/page-head";
 import { requireDbUser } from "@/lib/auth";
-import { getNavContext, getProjectKb } from "@/lib/data";
+import { checkContractGate, getNavContext, getProjectKb } from "@/lib/data";
 import { addManualKnowledgeEntry } from "./actions";
 
 export default async function KnowledgeBasePage({
@@ -11,6 +11,7 @@ export default async function KnowledgeBasePage({
   params: Promise<{ projectId: string }>;
 }) {
   const { projectId } = await params;
+  await checkContractGate(projectId);
   const [user, nav, { project, entries, canAddManual }] =
     await Promise.all([
       requireDbUser(),

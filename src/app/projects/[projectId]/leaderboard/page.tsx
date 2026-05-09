@@ -13,7 +13,7 @@ import { NudgeButton } from "@/components/nudge-button";
 import { PageHead } from "@/components/page-head";
 import { RefCard } from "@/components/ref-card";
 import { requireDbUser } from "@/lib/auth";
-import { getNavContext, getProjectLeaderboard } from "@/lib/data";
+import { checkContractGate, getNavContext, getProjectLeaderboard } from "@/lib/data";
 
 const MEDAL_COLOR: Record<number, string> = {
   1: "#d4a017", // gold
@@ -31,6 +31,7 @@ export default async function LeaderboardPage({
   params: Promise<{ projectId: string }>;
 }) {
   const { projectId } = await params;
+  await checkContractGate(projectId);
   const [user, nav, board] = await Promise.all([
     requireDbUser(),
     getNavContext({ projectId }),

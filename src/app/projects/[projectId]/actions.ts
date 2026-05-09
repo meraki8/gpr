@@ -19,6 +19,8 @@ import {
 } from "@/lib/kb";
 import { CAPABILITIES, resolveCapability } from "@/lib/capabilities";
 import { recomputeMemberScores } from "@/lib/scoring";
+import { renderContractPdf } from "@/lib/contract-pdf";
+import { put } from "@vercel/blob";
 
 const InviteSchema = z.object({
   projectId: z.string().min(1),
@@ -462,4 +464,194 @@ export async function analyzeTranscript(formData: FormData) {
   revalidatePath(`/projects/${projectId}/leaderboard`);
   revalidatePath(`/projects/${projectId}/members`);
   redirect(`/projects/${projectId}/reports/${matchReport.id}`);
+}
+
+export async function generateContract(projectId: string) {
+  const user = await requireDbUser();
+
+  // Only project owner can generate the contract
+  const project = await db.project.findFirst({
+    where: {
+      id: projectId,
+      deletedAt: null,
+      members: { some: { userId: user.id, role: "OWNER" } },
+    },
+    include: {
+      members: {
+        include: { user: { select: { id: true, name: true, email: true } } },
+      },
+    },
+  });
+  if (!project) throw new Error("FORBIDDEN");
+
+  const memberList = project.members
+    .map((m) => {
+      const name = m.user.name ?? m.user.email;
+      return `- ${name} (${m.role})`;
+    })
+    .join("\n");
+
+  const deadlineStr = project.deadline
+    ? project.deadline.toDateString()
+    : "No fixed deadline";
+
+  const response = await ai.responses.create({
+    model: AI_MODEL,
+    instructions: `You are GPR — Group Project Referee. Generate a professional group project accountability contract.
+The contract must be clear, firm, and specific to the project details provided.
+Structure it with these sections:
+1. Project Overview
+2. Member Responsibilities (one clause per member)
+3. Deadlines and Deliverables
+4. Accountability Rules (what constitutes a yellow card, red card)
+5. Agreement
+
+Use plain text with clear section headings. Do not use markdown. Keep it under 600 words.`,
+    input: `Project name: ${project.name}
+Project brief: ${project.brief}
+Deadline: ${deadlineStr}
+Members:
+${memberList}`,
+  });
+
+  const content = response.output_text?.trim();
+  if (!content) throw new Error("AI did not return contract content");
+
+  await db.contract.upsert({
+    where: { projectId },
+    create: { projectId, content, updatedAt: new Date() },
+    update: { content, updatedAt: new Date() },
+  });
+
+  revalidatePath(`/projects/${projectId}/contract`);
+}
+
+export async function updateContract(projectId: string, content: string) {
+  const user = await requireDbUser();
+
+  const project = await db.project.findFirst({
+    where: {
+      id: projectId,
+      deletedAt: null,
+      members: { some: { userId: user.id, role: "OWNER" } },
+    },
+  });
+  if (!project) throw new Error("FORBIDDEN");
+
+  if (!content.trim()) throw new Error("Contract content cannot be empty");
+
+  await db.contract.update({
+    where: { projectId },
+    data: { content: content.trim(), updatedAt: new Date() },
+  });
+
+  revalidatePath(`/projects/${projectId}/contract`);
+}
+
+export async function signContract(projectId: string, typedName: string) {
+  const user = await requireDbUser();
+
+  if (!typedName.trim()) throw new Error("Please type your name to sign");
+
+  const contract = await db.contract.findUnique({
+    where: { projectId },
+    include: {
+      project: {
+        include: { members: { where: { userId: user.id } } },
+      },
+    },
+  });
+
+  if (!contract) throw new Error("No contract found for this project");
+  if (contract.project.members.length === 0) throw new Error("FORBIDDEN");
+
+  const alreadySigned = await db.contractSignature.findUnique({
+    where: { contractId_userId: { contractId: contract.id, userId: user.id } },
+  });
+  if (alreadySigned) throw new Error("You have already signed this contract");
+
+  await db.contractSignature.create({
+    data: {
+      contractId: contract.id,
+      userId: user.id,
+    },
+  });
+
+  revalidatePath(`/projects/${projectId}/contract`);
+}
+
+export async function generateContractPdf(projectId: string) {
+  const user = await requireDbUser();
+
+  const contract = await db.contract.findUnique({
+    where: { projectId },
+    include: {
+      project: {
+        include: {
+          members: {
+            include: {
+              user: { select: { id: true, name: true, email: true } },
+            },
+          },
+        },
+      },
+      signatures: {
+        include: {
+          user: { select: { id: true, name: true, email: true } },
+        },
+      },
+    },
+  });
+
+  if (!contract) throw new Error("No contract found");
+
+  const isMember = contract.project.members.some((m) => m.userId === user.id);
+  if (!isMember) throw new Error("FORBIDDEN");
+
+  const members = contract.project.members.map((m) => ({
+    userId: m.userId,
+    name: m.user.name ?? m.user.email,
+    role: m.role,
+  }));
+
+  const signatures = contract.signatures.map((s) => ({
+    userId: s.userId,
+    userName: s.user.name ?? s.user.email,
+    signedAt: s.signedAt.toISOString(),
+  }));
+
+  const deadline = contract.project.deadline
+    ? contract.project.deadline.toLocaleDateString("en-GB", {
+        day: "numeric",
+        month: "short",
+        year: "numeric",
+      })
+    : null;
+
+  const pdfBuffer = await renderContractPdf({
+    projectName: contract.project.name,
+    deadline,
+    content: contract.content,
+    members,
+    signatures,
+    generatedAt: new Date().toLocaleDateString("en-GB", {
+      day: "numeric",
+      month: "short",
+      year: "numeric",
+    }),
+  });
+
+  const filename = `contracts/${projectId}/contract-${Date.now()}.pdf`;
+  const blob = await put(filename, pdfBuffer, {
+    access: "private",
+    contentType: "application/pdf",
+  });
+
+  await db.contract.update({
+    where: { projectId },
+    data: { pdfUrl: blob.url, updatedAt: new Date() },
+  });
+
+  revalidatePath(`/projects/${projectId}/contract`);
+  return blob.url;
 }

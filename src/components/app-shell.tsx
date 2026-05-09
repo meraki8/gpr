@@ -14,6 +14,7 @@ import {
   Moon,
   PanelLeftClose,
   PanelLeftOpen,
+  ScrollText,
   Sun,
   Trophy,
   Users,
@@ -235,6 +236,15 @@ export function AppShell({
                 icon={<FileText size={16} />}
                 active={pathname.startsWith(
                   `/projects/${currentProject.id}/transcripts`,
+                )}
+                collapsed={collapsed}
+              />
+              <SidebarItem
+                href={`/projects/${currentProject.id}/contract`}
+                label="Contract"
+                icon={<ScrollText size={16} />}
+                active={pathname.startsWith(
+                  `/projects/${currentProject.id}/contract`,
                 )}
                 collapsed={collapsed}
               />
