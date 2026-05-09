@@ -294,7 +294,6 @@ model Card {
   cardType      CardType
   reason        String   @db.Text
   evidenceJson  Json?
-  aiGenerated   Boolean  @default(true)
   matchReportId String?
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
