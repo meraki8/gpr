@@ -41,8 +41,19 @@ export default async function KnowledgeBasePage({
       getProjectKb(projectId, activeSource ?? undefined),
     ]);
 
-  const countMap = new Map(counts.map((c) => [c.source, c._count._all]));
-  const totalCount = counts.reduce((sum, c) => sum + c._count._all, 0);
+  const countMap = new Map(
+    counts.map(
+      (c: { source: string; _count: { _all: number } }) => [
+        c.source,
+        c._count._all,
+      ],
+    ),
+  );
+  const totalCount = counts.reduce(
+    (sum: number, c: { source: string; _count: { _all: number } }) =>
+      sum + c._count._all,
+    0,
+  );
 
   return (
     <AppShell
