@@ -2,7 +2,7 @@ import Link from "next/link";
 import { AppShell } from "@/components/app-shell";
 import { PageHead } from "@/components/page-head";
 import { requireDbUser } from "@/lib/auth";
-import { getNavContext, getProjectReportsList } from "@/lib/data";
+import { checkContractGate, getNavContext, getProjectReportsList } from "@/lib/data";
 
 export default async function ReportsIndexPage({
   params,
@@ -10,6 +10,7 @@ export default async function ReportsIndexPage({
   params: Promise<{ projectId: string }>;
 }) {
   const { projectId } = await params;
+  await checkContractGate(projectId);
   const [user, nav, { project, reports }] = await Promise.all([
     requireDbUser(),
     getNavContext({ projectId }),

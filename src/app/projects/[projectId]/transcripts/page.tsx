@@ -3,7 +3,7 @@ import { PageHead } from "@/components/page-head";
 import { TranscriptArchive } from "@/components/transcript-archive";
 import { TranscriptUploadForm } from "@/components/transcript-upload-form";
 import { requireDbUser } from "@/lib/auth";
-import { getNavContext, getProjectTranscripts } from "@/lib/data";
+import { checkContractGate, getNavContext, getProjectTranscripts } from "@/lib/data";
 
 export default async function TranscriptsPage({
   params,
@@ -11,6 +11,7 @@ export default async function TranscriptsPage({
   params: Promise<{ projectId: string }>;
 }) {
   const { projectId } = await params;
+  await checkContractGate(projectId);
   const [user, nav, { project, isOwner, canRunAnalysis }] =
     await Promise.all([
       requireDbUser(),

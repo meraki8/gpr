@@ -1,8 +1,22 @@
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { db } from "./db";
 import { requireDbUser } from "./auth";
 import { CAPABILITIES, resolveCapability } from "./capabilities";
 import { computeProjectHealth } from "./health";
+
+export async function checkContractGate(projectId: string) {
+  const user = await requireDbUser();
+  const contract = await db.contract.findUnique({
+    where: { projectId },
+    select: {
+      id: true,
+      signatures: { where: { userId: user.id }, select: { id: true } },
+    },
+  });
+  if (contract && contract.signatures.length === 0) {
+    redirect(`/projects/${projectId}/contract`);
+  }
+}
 
 export async function getMyGroups() {
   const user = await requireDbUser();
@@ -1348,4 +1362,41 @@ export async function getMatchReport(reportId: string) {
   // The AI is the ref — every card is final, every report is final.
   // Anyone on the project sees everything.
   return { ...report, isOwner };
+}
+
+export async function getProjectContract(projectId: string) {
+  const user = await requireDbUser();
+  const project = await db.project.findFirst({
+    where: {
+      id: projectId,
+      deletedAt: null,
+      members: { some: { userId: user.id } },
+    },
+    include: {
+      group: true,
+      members: {
+        include: {
+          user: { select: { id: true, name: true, email: true } },
+        },
+      },
+      contract: {
+        include: {
+          signatures: {
+            include: {
+              user: { select: { id: true, name: true, email: true } },
+            },
+          },
+        },
+      },
+    },
+  });
+  if (!project) notFound();
+
+  const viewerMember = project.members.find((m) => m.userId === user.id);
+  const isOwner = viewerMember?.role === "OWNER";
+  const hasSigned = project.contract
+    ? project.contract.signatures.some((s) => s.userId === user.id)
+    : false;
+
+  return { project, contract: project.contract, isOwner, hasSigned, user };
 }

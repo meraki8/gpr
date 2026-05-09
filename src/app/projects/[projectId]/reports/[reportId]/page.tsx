@@ -4,7 +4,7 @@ import { FormatBadge } from "@/components/format-badge";
 import { Score } from "@/components/score";
 import { RefCard, cardKindFromCardType } from "@/components/ref-card";
 import { requireDbUser } from "@/lib/auth";
-import { getMatchReport, getNavContext } from "@/lib/data";
+import { checkContractGate, getMatchReport, getNavContext } from "@/lib/data";
 
 export default async function ReportPage({
   params,
@@ -12,6 +12,7 @@ export default async function ReportPage({
   params: Promise<{ projectId: string; reportId: string }>;
 }) {
   const { projectId, reportId } = await params;
+  await checkContractGate(projectId);
   const [user, nav, report] = await Promise.all([
     requireDbUser(),
     getNavContext({ projectId }),

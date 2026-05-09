@@ -2,11 +2,7 @@ import { AppShell } from "@/components/app-shell";
 import { KnowledgeBaseExplorer } from "@/components/knowledge-base-explorer";
 import { PageHead } from "@/components/page-head";
 import { requireDbUser } from "@/lib/auth";
-import {
-  getNavContext,
-  getProjectKb,
-  type KbDateRangeKey,
-} from "@/lib/data";
+import { checkContractGate, getNavContext, getProjectKb, type KbDateRangeKey } from "@/lib/data";
 import { addManualKnowledgeEntry } from "./actions";
 
 const VALID_RANGES: KbDateRangeKey[] = [
@@ -33,6 +29,8 @@ export default async function KnowledgeBasePage({
 }) {
   const { projectId } = await params;
   const sp = await searchParams;
+  
+  await checkContractGate(projectId);
 
   const rawRange = firstParam(sp.range);
   const range: KbDateRangeKey =

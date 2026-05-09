@@ -63,16 +63,17 @@ model User {
   createdAt           DateTime        @default(now())
   updatedAt           DateTime        @updatedAt
 
-  ownedGroups         Group[]         @relation("GroupOwner")
-  groupMemberships    GroupMember[]
-  projectMemberships  ProjectMember[]
-  uploadedFiles       ContextFile[]   @relation("FileUploader")
-  uploadedTranscripts Transcript[]    @relation("TranscriptUploader")
-  assignedTasks       Task[]          @relation("TaskAssignee")
-  cardsAgainst        Card[]          @relation("CardSubject")
-  invitesSent         ProjectInvite[] @relation("InviteSender")
-  memberReports       MemberReport[]
-  notifications       Notification[]
+  ownedGroups           Group[]             @relation("GroupOwner")
+  groupMemberships      GroupMember[]
+  projectMemberships    ProjectMember[]
+  uploadedFiles         ContextFile[]       @relation("FileUploader")
+  uploadedTranscripts   Transcript[]        @relation("TranscriptUploader")
+  assignedTasks         Task[]              @relation("TaskAssignee")
+  cardsAgainst          Card[]              @relation("CardSubject")
+  invitesSent           ProjectInvite[]     @relation("InviteSender")
+  memberReports         MemberReport[]
+  notifications         Notification[]
+  contractSignatures    ContractSignature[]
 
   @@index([clerkUserId])
   @@index([email])
@@ -132,6 +133,7 @@ model Project {
   sourceIdentities    SourceIdentity[]
   notifications       Notification[]
   knowledgeEntries    KnowledgeEntry[]
+  contract            Contract?
 
   @@index([groupId])
   @@index([deletedAt])
@@ -420,6 +422,34 @@ model KnowledgeEntry {
   @@unique([projectId, source, sourceRefId])
   @@index([projectId, createdAt])
   @@index([projectId, source])
+}
+
+// =================== CONTRACTS ===================
+
+model Contract {
+  id        String   @id @default(cuid())
+  projectId String   @unique
+  content   String   @db.Text
+  pdfUrl    String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  project    Project             @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  signatures ContractSignature[]
+}
+
+model ContractSignature {
+  id         String   @id @default(cuid())
+  contractId String
+  userId     String
+  signedAt   DateTime @default(now())
+
+  contract Contract @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([contractId, userId])
+  @@index([contractId])
+  @@index([userId])
 }
 
 // =================== NOTIFICATIONS ===================
