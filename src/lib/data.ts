@@ -131,6 +131,7 @@ export async function getGroup(groupId: string) {
       projects: {
         where: projectAccessFilter,
         orderBy: { createdAt: "desc" },
+        include: { _count: { select: { members: true } } },
       },
     },
   });
