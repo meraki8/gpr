@@ -5,10 +5,8 @@ import { z } from "zod";
 import { revalidatePath } from "next/cache";
 import { requireDbUser } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { fetchCommits, fetchPullRequests } from "@/lib/github";
+import { syncGithubProject } from "@/lib/github-sync";
 import { syncJiraProject } from "@/lib/jira-sync";
-import { KB_SOURCES, addKnowledgeEntries } from "@/lib/kb";
-import { recomputeMemberScores } from "@/lib/scoring";
 
 async function requireOwner(projectId: string, userId: string) {
   const member = await db.projectMember.findFirst({
@@ -165,146 +163,9 @@ export async function syncGithubSource(formData: FormData) {
   const { projectId } = parsed.data;
   await requireOwner(projectId, user.id);
 
-  const source = await db.contributionSource.findUnique({
-    where: { projectId_sourceType: { projectId, sourceType: "GITHUB" } },
-  });
-  if (!source) throw new Error("No GitHub source configured");
-
-  const config = source.configJson as { repos?: string[] } | null;
-  const repos = config?.repos ?? [];
-  if (repos.length === 0) throw new Error("No repos configured");
-
-  const identities = await db.sourceIdentity.findMany({
-    where: { projectId, sourceType: "GITHUB" },
-    include: { projectMember: true },
-  });
-  const usernameToUserId = new Map(
-    identities.map((i) => [
-      i.externalId.toLowerCase(),
-      i.projectMember.userId,
-    ]),
-  );
-
-  const since =
-    source.lastSyncedAt ?? new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-
-  for (const repo of repos) {
-    const [owner, name] = repo.split("/");
-
-    const commits = await fetchCommits(owner, name, since);
-    if (commits.length > 0) {
-      await db.contributionEvent.createMany({
-        data: commits.map((c) => ({
-          projectId,
-          sourceId: source.id,
-          sourceType: "GITHUB" as const,
-          externalId: c.sha,
-          eventType: "commit",
-          payloadJson: {
-            repo,
-            sha: c.sha,
-            message: c.commit.message.split("\n")[0].slice(0, 200),
-            login: c.author?.login ?? null,
-            url: c.html_url,
-          },
-          userId: c.author?.login
-            ? (usernameToUserId.get(c.author.login.toLowerCase()) ?? null)
-            : null,
-          weight: 1.0,
-          occurredAt: new Date(c.commit.author?.date ?? Date.now()),
-        })),
-        skipDuplicates: true,
-      });
-
-      await addKnowledgeEntries(
-        commits.map((c) => {
-          const subject = c.commit.message.split("\n")[0].slice(0, 200);
-          const body = c.commit.message.includes("\n")
-            ? c.commit.message.split("\n").slice(1).join("\n").trim()
-            : "";
-          const author = c.author?.login ?? "unknown";
-          return {
-            projectId,
-            source: KB_SOURCES.GITHUB,
-            sourceRefId: `commit:${repo}:${c.sha}`,
-            sourceTypeLabel: "Commit",
-            title: subject,
-            content: [
-              `${repo} · ${c.sha.slice(0, 7)} · @${author}`,
-              body,
-              c.html_url,
-            ]
-              .filter(Boolean)
-              .join("\n"),
-          };
-        }),
-      );
-    }
-
-    const prs = await fetchPullRequests(owner, name);
-    if (prs.length > 0) {
-      await db.contributionEvent.createMany({
-        data: prs.map((pr) => ({
-          projectId,
-          sourceId: source.id,
-          sourceType: "GITHUB" as const,
-          externalId: `pr-${repo}-${pr.number}`,
-          eventType: pr.merged_at
-            ? "pr_merged"
-            : pr.state === "closed"
-              ? "pr_closed"
-              : "pr_opened",
-          payloadJson: {
-            repo,
-            number: pr.number,
-            title: pr.title,
-            login: pr.user?.login ?? null,
-            url: pr.html_url,
-            state: pr.state,
-            merged_at: pr.merged_at,
-          },
-          userId: pr.user?.login
-            ? (usernameToUserId.get(pr.user.login.toLowerCase()) ?? null)
-            : null,
-          weight: 3.0,
-          occurredAt: new Date(pr.created_at),
-        })),
-        skipDuplicates: true,
-      });
-
-      await addKnowledgeEntries(
-        prs.map((pr) => {
-          const state = pr.merged_at
-            ? "merged"
-            : pr.state === "closed"
-              ? "closed"
-              : "opened";
-          const author = pr.user?.login ?? "unknown";
-          return {
-            projectId,
-            source: KB_SOURCES.GITHUB,
-            sourceRefId: `pr:${repo}:${pr.number}`,
-            sourceTypeLabel: `PR ${state}`,
-            title: `#${pr.number} ${pr.title}`,
-            content: [`${repo} · @${author} · ${state}`, pr.html_url].join(
-              "\n",
-            ),
-          };
-        }),
-      );
-    }
-  }
-
-  await db.contributionSource.update({
-    where: { id: source.id },
-    data: { lastSyncedAt: new Date() },
-  });
-
-  // GitHub events change every member's bonus, so recompute.
-  try {
-    await recomputeMemberScores(projectId, "github sync");
-  } catch (err) {
-    console.error("Failed to recompute member scores:", err);
+  const summary = await syncGithubProject(projectId);
+  if (summary.errors.length > 0 && summary.repos === 0) {
+    throw new Error(summary.errors[0]);
   }
 
   revalidatePath(`/projects/${projectId}/sources`);
