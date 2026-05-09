@@ -25,6 +25,10 @@ import {
   cardNotificationBody,
   notifyUsers,
 } from "@/lib/notifications";
+import {
+  detectTranscriptFormat,
+  transcriptFormatPromptContext,
+} from "@/lib/transcript-format";
 
 const InviteSchema = z.object({
   projectId: z.string().min(1),
@@ -390,6 +394,11 @@ export async function analyzeTranscript(formData: FormData) {
   }
 
   // 1. Save raw transcript first so it's persisted even if AI fails.
+  // Detected platform format (discord/slack/zoom/etc.) is recorded
+  // on the transcript itself so the archive, the match report, and
+  // any KB entries that come out of analysis can render the same
+  // badge without re-running detection.
+  const sourceFormat = detectTranscriptFormat(rawText);
   const transcript = await db.transcript.create({
     data: {
       projectId,
@@ -398,6 +407,7 @@ export async function analyzeTranscript(formData: FormData) {
       title: title ?? null,
       meetingAt,
       source: file ? "FILE" : "PASTE",
+      sourceFormat,
     },
   });
 
@@ -417,6 +427,8 @@ export async function analyzeTranscript(formData: FormData) {
 
   const instructions = [
     "You are GPR, an AI referee for group projects. Your job is to read meeting transcripts and produce honest, structured Match Reports that hold members accountable based on what they actually did and said.",
+    "",
+    `SOURCE FORMAT (auto-detected: ${sourceFormat}): ${transcriptFormatPromptContext(sourceFormat)}`,
     "",
     "RULES:",
     "- Use the EXACT userId values from the members list below. Do not invent userIds.",
@@ -522,6 +534,7 @@ export async function analyzeTranscript(formData: FormData) {
           return {
             projectId,
             source: KB_SOURCES.TRANSCRIPT,
+            sourceFormat,
             title: k.title,
             content: k.content,
             // Per-entry deterministic ref so repeat analyses on the same

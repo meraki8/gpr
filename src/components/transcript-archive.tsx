@@ -3,6 +3,7 @@
 import { ChevronLeft, ChevronRight, Search } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
+import { FormatBadge } from "@/components/format-badge";
 
 type Transcript = {
   id: string;
@@ -10,6 +11,7 @@ type Transcript = {
   meetingAt: Date | string | null;
   createdAt: Date | string;
   source: string;
+  sourceFormat: string | null;
   kbEntryCount: number;
   uploaderId: string;
   uploader: { name: string | null; email: string };
@@ -280,16 +282,26 @@ export function TranscriptArchive({
                 </span>
                 <span
                   style={{
-                    fontSize: 14,
-                    fontWeight: 600,
-                    color: "var(--ink)",
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 8,
+                    minWidth: 0,
                   }}
-                  title={display}
                 >
-                  {truncated}
+                  <span
+                    style={{
+                      fontSize: 14,
+                      fontWeight: 600,
+                      color: "var(--ink)",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                    title={display}
+                  >
+                    {truncated}
+                  </span>
+                  <FormatBadge format={t.sourceFormat} />
                 </span>
                 <span
                   style={{

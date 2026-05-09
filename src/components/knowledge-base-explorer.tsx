@@ -9,10 +9,12 @@ import {
   ChevronLeft,
 } from "lucide-react";
 import { KB_SOURCES } from "@/lib/kb";
+import { FormatBadge } from "@/components/format-badge";
 
 type Entry = {
   id: string;
   source: string;
+  sourceFormat: string | null;
   sourceTypeLabel: string | null;
   title: string;
   content: string;
@@ -719,18 +721,30 @@ function EntryAccordion({
         }}
       >
         <span
-          className="label"
           style={{
-            color,
-            fontSize: 11,
-            letterSpacing: "0.06em",
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 6,
+            minWidth: 0,
           }}
           title={badgeText}
         >
-          {badgeText}
+          <span
+            className="label"
+            style={{
+              color,
+              fontSize: 11,
+              letterSpacing: "0.06em",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {badgeText}
+          </span>
+          {entry.sourceFormat && (
+            <FormatBadge format={entry.sourceFormat} />
+          )}
         </span>
         <span
           style={{

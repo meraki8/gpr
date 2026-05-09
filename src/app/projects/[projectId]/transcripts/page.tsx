@@ -27,6 +27,7 @@ export default async function TranscriptsPage({
     meetingAt: t.meetingAt ? t.meetingAt.toISOString() : null,
     createdAt: t.createdAt.toISOString(),
     source: t.source,
+    sourceFormat: t.sourceFormat,
     kbEntryCount: t.kbEntryCount,
     uploaderId: t.uploadedBy,
     uploader: {
