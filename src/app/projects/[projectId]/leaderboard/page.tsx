@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { AnimatedNumber } from "@/components/animated-number";
+import { AvatarImg } from "@/components/avatar-img";
 import { NudgeButton } from "@/components/nudge-button";
 import { PageHead } from "@/components/page-head";
 import { RefCard } from "@/components/ref-card";
@@ -507,16 +508,11 @@ function Avatar({
       }}
     >
       {member.user.avatarUrl ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
+        <AvatarImg
           src={member.user.avatarUrl}
           alt={member.user.name ?? member.user.email}
-          width={size}
-          height={size}
-          style={{
-            borderRadius: 999,
-            objectFit: "cover",
-          }}
+          size={size}
+          initial={initial}
         />
       ) : (
         <span
