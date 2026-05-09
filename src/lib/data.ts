@@ -321,11 +321,25 @@ export async function getProjectOverview(projectId: string) {
       title: `joined the project`,
     });
   }
-  // Group GitHub commits by day so a sync of 50 commits doesn't drown
-  // the feed. PRs stay individual since they're rarer.
+  // ContributionEvent has a userId column but no Prisma `user`
+  // relation, so we resolve the name manually off the project's
+  // member list (already loaded above).
+  const userById = new Map<
+    string,
+    { name: string | null; email: string }
+  >();
+  for (const m of project.members) {
+    userById.set(m.userId, { name: m.user.name, email: m.user.email });
+  }
+
+  // Group GitHub commits by (day, author) so a sync of 50 commits
+  // doesn't drown the feed but two contributors on the same day each
+  // get their own row. Keying on userId picks up commits attributed
+  // post-backfill that have no payload.login. PRs stay individual
+  // since they're rarer.
   const commitBuckets = new Map<
     string,
-    { at: Date; count: number; login: string | null }
+    { at: Date; count: number; actor: string | null }
   >();
   for (const e of recentEvents) {
     const payload = e.payloadJson as {
@@ -333,32 +347,39 @@ export async function getProjectOverview(projectId: string) {
       title?: string;
       url?: string;
     };
+    // Prefer the GitHub login when present (it reads as @handle),
+    // then fall back to the user-by-id lookup so backfilled rows
+    // aren't anonymous.
+    const eventUser = e.userId ? userById.get(e.userId) : null;
+    const actor =
+      payload.login ?? eventUser?.name ?? eventUser?.email ?? null;
     if (e.eventType === "commit") {
       const day = e.occurredAt.toISOString().slice(0, 10);
-      const bucket = commitBuckets.get(day) ?? {
+      const bucketKey = `${day}-${e.userId ?? payload.login ?? "unknown"}`;
+      const bucket = commitBuckets.get(bucketKey) ?? {
         at: e.occurredAt,
         count: 0,
-        login: payload.login ?? null,
+        actor,
       };
       bucket.count += 1;
       if (e.occurredAt > bucket.at) bucket.at = e.occurredAt;
-      commitBuckets.set(day, bucket);
+      commitBuckets.set(bucketKey, bucket);
     } else {
       activities.push({
         key: `g-${e.id}`,
         at: e.occurredAt,
         kind: "github",
-        actor: payload.login ?? null,
+        actor,
         title: payload.title ?? e.eventType.replace(/_/g, " "),
       });
     }
   }
-  for (const [day, b] of commitBuckets) {
+  for (const [bucketKey, b] of commitBuckets) {
     activities.push({
-      key: `gc-${day}`,
+      key: `gc-${bucketKey}`,
       at: b.at,
       kind: "github",
-      actor: b.login,
+      actor: b.actor,
       title: `${b.count} commit${b.count === 1 ? "" : "s"} pushed`,
     });
   }
@@ -536,18 +557,32 @@ export async function getProjectSources(
         orderBy: { joinedAt: "asc" },
       },
       contributionSources: { orderBy: { createdAt: "asc" } },
-      contributionEvents: {
-        where: eventSourceType ? { sourceType: eventSourceType } : undefined,
-        orderBy: { occurredAt: "desc" },
-        skip: (page - 1) * EVENTS_PER_PAGE,
-        take: EVENTS_PER_PAGE + 1,
-      },
     },
   });
   if (!project) notFound();
 
-  const hasNextPage = project.contributionEvents.length > EVENTS_PER_PAGE;
-  const contributionEvents = project.contributionEvents.slice(0, EVENTS_PER_PAGE);
+  // ContributionEvent has no Prisma `user` relation, so we fetch
+  // events plain and build a userId → display lookup off the
+  // project's members.
+  const eventPage = await db.contributionEvent.findMany({
+    where: {
+      projectId,
+      ...(eventSourceType ? { sourceType: eventSourceType } : {}),
+    },
+    orderBy: { occurredAt: "desc" },
+    skip: (page - 1) * EVENTS_PER_PAGE,
+    take: EVENTS_PER_PAGE + 1,
+  });
+
+  const hasNextPage = eventPage.length > EVENTS_PER_PAGE;
+  const contributionEvents = eventPage.slice(0, EVENTS_PER_PAGE);
+  const usersById = new Map<
+    string,
+    { name: string | null; email: string }
+  >();
+  for (const m of project.members) {
+    usersById.set(m.user.id, { name: m.user.name, email: m.user.email });
+  }
 
   // Pull ALL GitHub events with a mapped userId to build the leaderboard —
   // independent of pagination so the leaderboard always shows totals.
@@ -592,7 +627,9 @@ export async function getProjectSources(
     .sort((a, b) => b.score - a.score);
 
   return {
-    project: { ...project, contributionEvents },
+    project,
+    contributionEvents,
+    usersById,
     isOwner: member.role === "OWNER",
     page,
     hasNextPage,
