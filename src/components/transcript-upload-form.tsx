@@ -14,14 +14,27 @@ function defaultMeetingAt(): string {
   );
 }
 
+const DUPLICATE_PREFIX = "DUPLICATE_TRANSCRIPT|";
+
 export function TranscriptUploadForm({ projectId }: { projectId: string }) {
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [fileName, setFileName] = useState<string | null>(null);
+  // ISO of the existing matching transcript when the server flags
+  // this paste as a likely duplicate. Cleared on edit.
+  const [duplicateIso, setDuplicateIso] = useState<string | null>(null);
   const formRef = useRef<HTMLFormElement>(null);
+  // Ref (not state) — a single submit's confirmation flag, consumed
+  // and reset within onSubmit so a later submit doesn't auto-confirm.
+  const confirmDupRef = useRef(false);
 
   const onSubmit = (formData: FormData) => {
     setError(null);
+    setDuplicateIso(null);
+    if (confirmDupRef.current) {
+      formData.set("confirmDuplicate", "true");
+      confirmDupRef.current = false;
+    }
     startTransition(async () => {
       try {
         await analyzeTranscript(formData);
@@ -29,9 +42,19 @@ export function TranscriptUploadForm({ projectId }: { projectId: string }) {
         // Server action throws are bubbled here; redirect-on-success
         // throws a NEXT_REDIRECT we should not display.
         const msg = e instanceof Error ? e.message : "Something went wrong";
-        if (!msg.includes("NEXT_REDIRECT")) setError(msg);
+        if (msg.includes("NEXT_REDIRECT")) return;
+        if (msg.startsWith(DUPLICATE_PREFIX)) {
+          setDuplicateIso(msg.slice(DUPLICATE_PREFIX.length));
+        } else {
+          setError(msg);
+        }
       }
     });
+  };
+
+  const runAnyway = () => {
+    confirmDupRef.current = true;
+    formRef.current?.requestSubmit();
   };
 
   return (
@@ -77,6 +100,10 @@ export function TranscriptUploadForm({ projectId }: { projectId: string }) {
         className="field field-lg num"
         style={{ resize: "vertical" }}
         disabled={pending}
+        onChange={() => {
+          // Editing the text invalidates a previous duplicate flag.
+          if (duplicateIso) setDuplicateIso(null);
+        }}
       />
 
       <div
@@ -154,6 +181,44 @@ export function TranscriptUploadForm({ projectId }: { projectId: string }) {
           {pending ? "Running…" : "Run analysis →"}
         </button>
       </div>
+
+      {duplicateIso && (
+        <div
+          role="alert"
+          style={{
+            fontSize: 13,
+            padding: "12px 16px",
+            border: "1px solid var(--status-watch)",
+            borderRadius: 4,
+            background: "var(--paper)",
+            display: "flex",
+            alignItems: "center",
+            gap: 14,
+            flexWrap: "wrap",
+          }}
+        >
+          <span style={{ flex: 1, minWidth: 220 }}>
+            This transcript appears to have already been uploaded on{" "}
+            <strong>
+              {new Date(duplicateIso).toLocaleDateString(undefined, {
+                weekday: "short",
+                month: "short",
+                day: "numeric",
+                year: "numeric",
+              })}
+            </strong>
+            . Are you sure you want to run a new analysis?
+          </span>
+          <button
+            type="button"
+            onClick={runAnyway}
+            className="pill pill-sm"
+            disabled={pending}
+          >
+            Run anyway →
+          </button>
+        </div>
+      )}
 
       {error && (
         <div

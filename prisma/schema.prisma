@@ -419,14 +419,19 @@ model ScoreSnapshot {
 // providers can be added without a schema migration — values in use
 // today: "transcript", "github", "jira", "manual".
 model KnowledgeEntry {
-  id              String   @id @default(cuid())
+  id              String    @id @default(cuid())
   projectId       String
   source          String
   sourceRefId     String?
   sourceTypeLabel String?
   title           String
-  content         String   @db.Text
-  createdAt       DateTime @default(now())
+  content         String    @db.Text
+  // Accountability context extracted from transcripts. Both nullable
+  // because not every entry has an owner or due date — GitHub commits
+  // and free-form notes typically won't.
+  assignedTo      String?
+  targetDate      DateTime?
+  createdAt       DateTime  @default(now())
 
   project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
 

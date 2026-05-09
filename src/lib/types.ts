@@ -57,6 +57,18 @@ export const KnowledgeFact = z.object({
     .describe(
       "1-3 sentence statement of the decision, commitment, or context. Self-contained — readable without the transcript.",
     ),
+  assigned_to: z
+    .string()
+    .nullable()
+    .describe(
+      "Name of the person responsible for this item if the transcript clearly assigns it. Use the speaker's name as it appears. Null if no clear owner.",
+    ),
+  target_date_iso: z
+    .string()
+    .nullable()
+    .describe(
+      "ISO date (YYYY-MM-DD) of the deadline if mentioned (e.g. 'by Friday', 'next Tuesday', 'EOD Wednesday'). Resolve relative dates against the meeting timestamp provided in the prompt. Null if no date is mentioned.",
+    ),
 });
 
 export const MatchAnalysis = z.object({

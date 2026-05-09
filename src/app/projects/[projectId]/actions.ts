@@ -144,6 +144,36 @@ const TranscriptInputSchema = z.object({
     .transform((v) => (v && v.length > 0 ? v : undefined)),
 });
 
+// Cheap text similarity (no AI). Matches on length proximity + word
+// overlap on the normalized first 500 chars. Catches "user pasted the
+// same transcript twice" without needing token embeddings.
+function normalizeForSim(s: string): string {
+  return s.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function transcriptSimilarity(a: string, b: string): number {
+  const aN = normalizeForSim(a);
+  const bN = normalizeForSim(b);
+  const maxLen = Math.max(aN.length, bN.length, 1);
+  const lengthSim = 1 - Math.abs(aN.length - bN.length) / maxLen;
+
+  const headA = aN.slice(0, 500);
+  const headB = bN.slice(0, 500);
+  const tokA = new Set(
+    headA.split(/\W+/).filter((t) => t.length >= 2),
+  );
+  const tokB = new Set(
+    headB.split(/\W+/).filter((t) => t.length >= 2),
+  );
+  const inter = [...tokA].filter((t) => tokB.has(t)).length;
+  const union = new Set([...tokA, ...tokB]).size;
+  const jaccard = union === 0 ? 0 : inter / union;
+
+  return (lengthSim + jaccard) / 2;
+}
+
+const DUPLICATE_PREFIX = "DUPLICATE_TRANSCRIPT|";
+
 async function readUploadedTranscriptFile(file: File): Promise<string> {
   const buf = new Uint8Array(await file.arrayBuffer());
   const isPdf =
@@ -237,6 +267,35 @@ export async function analyzeTranscript(formData: FormData) {
   });
   if (!project) throw new Error("Project not found");
 
+  // Duplicate check — skip when the user has already confirmed they
+  // know this looks like an existing upload. Limit comparison to the
+  // most recent transcripts; older ones are unlikely candidates.
+  const confirmDuplicate =
+    (formData.get("confirmDuplicate") ?? "").toString() === "true";
+  if (!confirmDuplicate) {
+    const recent = await db.transcript.findMany({
+      where: { projectId },
+      select: {
+        id: true,
+        rawText: true,
+        createdAt: true,
+        meetingAt: true,
+      },
+      orderBy: { createdAt: "desc" },
+      take: 50,
+    });
+    for (const existing of recent) {
+      const score = transcriptSimilarity(rawText, existing.rawText);
+      if (score >= 0.8) {
+        const ref = existing.meetingAt ?? existing.createdAt;
+        // Sentinel error — the form parses this prefix to render a
+        // "Run anyway" confirmation rather than treat it as a hard
+        // failure.
+        throw new Error(`${DUPLICATE_PREFIX}${ref.toISOString()}`);
+      }
+    }
+  }
+
   // 1. Save raw transcript first so it's persisted even if AI fails.
   const transcript = await db.transcript.create({
     data: {
@@ -279,6 +338,8 @@ export async function analyzeTranscript(formData: FormData) {
     "- A meeting can produce zero cards. That's fine. Don't force them.",
     "- summary: 1-3 sentences capturing the meeting's overall outcome and team health.",
     "- key_knowledge: 3-5 durable facts from THIS meeting worth saving to the project knowledge base. Decisions, scope changes, owned commitments, blockers. Skip social chatter and anything already covered in 'PROJECT KNOWLEDGE' below — don't restate prior context.",
+    "  * assigned_to: name of the person responsible if the transcript clearly assigns it (use the speaker's name as it appears). Null when no clear owner.",
+    "  * target_date_iso: ISO date (YYYY-MM-DD) of the deadline if mentioned. Resolve relative dates ('Friday', 'next Tuesday', 'EOD Wednesday') against the meeting time given above. Null when no date is mentioned.",
     "",
     "PROJECT:",
     `Name: ${project.name}`,
@@ -362,16 +423,25 @@ export async function analyzeTranscript(formData: FormData) {
   if (analysis.key_knowledge.length > 0) {
     try {
       await addKnowledgeEntries(
-        analysis.key_knowledge.map((k, idx) => ({
-          projectId,
-          source: KB_SOURCES.TRANSCRIPT,
-          title: k.title,
-          content: k.content,
-          // Per-entry deterministic ref so repeat analyses on the same
-          // report don't double-insert.
-          sourceRefId: `${matchReport.id}:${idx}`,
-          sourceTypeLabel: "Match report",
-        })),
+        analysis.key_knowledge.map((k, idx) => {
+          let targetDate: Date | null = null;
+          if (k.target_date_iso) {
+            const parsed = new Date(k.target_date_iso);
+            if (!Number.isNaN(parsed.getTime())) targetDate = parsed;
+          }
+          return {
+            projectId,
+            source: KB_SOURCES.TRANSCRIPT,
+            title: k.title,
+            content: k.content,
+            // Per-entry deterministic ref so repeat analyses on the same
+            // report don't double-insert.
+            sourceRefId: `${matchReport.id}:${idx}`,
+            sourceTypeLabel: "Match report",
+            assignedTo: k.assigned_to ?? null,
+            targetDate,
+          };
+        }),
       );
     } catch (err) {
       console.error("Failed to persist KB entries from transcript:", err);

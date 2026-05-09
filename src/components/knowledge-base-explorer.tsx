@@ -11,12 +11,16 @@ type Entry = {
   title: string;
   content: string;
   createdAt: Date | string;
+  assignedTo: string | null;
+  targetDate: Date | string | null;
 };
 
-type NormalizedEntry = Omit<Entry, "createdAt"> & { createdAt: Date };
+type NormalizedEntry = Omit<Entry, "createdAt" | "targetDate"> & {
+  createdAt: Date;
+  targetDate: Date | null;
+};
 
 type DateBucket = "today" | "yesterday" | "thisWeek" | "older";
-type DateFilter = "today" | "week" | "month" | "all";
 
 const SOURCE_FILTERS: Array<{ key: string | null; label: string }> = [
   { key: null, label: "All" },
@@ -24,13 +28,6 @@ const SOURCE_FILTERS: Array<{ key: string | null; label: string }> = [
   { key: KB_SOURCES.GITHUB, label: "GitHub" },
   { key: KB_SOURCES.JIRA, label: "Jira" },
   { key: KB_SOURCES.MANUAL, label: "Manual" },
-];
-
-const DATE_FILTERS: Array<{ key: DateFilter; label: string }> = [
-  { key: "all", label: "All time" },
-  { key: "today", label: "Today" },
-  { key: "week", label: "This week" },
-  { key: "month", label: "This month" },
 ];
 
 const SOURCE_BADGE_COLOR: Record<string, string> = {
@@ -47,25 +44,21 @@ const BUCKET_LABEL: Record<DateBucket, string> = {
   older: "Older",
 };
 
+const ENTRY_GRID =
+  "minmax(120px, 160px) minmax(0, 1fr) 140px 90px 90px 20px";
+
 function startOfDay(d: Date): Date {
   const x = new Date(d);
   x.setHours(0, 0, 0, 0);
   return x;
 }
 
-// ISO-week start: Monday 00:00 of the week containing `d` in local time.
 function startOfIsoWeek(d: Date): Date {
   const today = startOfDay(d);
-  const dow = today.getDay(); // 0 = Sun … 6 = Sat
+  const dow = today.getDay();
   const offset = dow === 0 ? 6 : dow - 1;
   today.setDate(today.getDate() - offset);
   return today;
-}
-
-function startOfMonth(d: Date): Date {
-  const x = startOfDay(d);
-  x.setDate(1);
-  return x;
 }
 
 function bucketOf(date: Date, now: Date): DateBucket {
@@ -80,12 +73,29 @@ function bucketOf(date: Date, now: Date): DateBucket {
   return "older";
 }
 
-function matchesDateFilter(date: Date, filter: DateFilter, now: Date) {
-  if (filter === "all") return true;
-  if (filter === "today") return date >= startOfDay(now);
-  if (filter === "week") return date >= startOfIsoWeek(now);
-  if (filter === "month") return date >= startOfMonth(now);
-  return true;
+// Parse a YYYY-MM-DD value from <input type="date"> as a local-time
+// date so range comparisons match what the user sees in the picker.
+function parseDateInput(value: string): Date | null {
+  if (!value) return null;
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!m) return null;
+  const d = new Date(
+    Number(m[1]),
+    Number(m[2]) - 1,
+    Number(m[3]),
+    0,
+    0,
+    0,
+    0,
+  );
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+function formatDate(d: Date) {
+  return d.toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+  });
 }
 
 export function KnowledgeBaseExplorer({
@@ -93,49 +103,61 @@ export function KnowledgeBaseExplorer({
 }: {
   entries: Entry[];
 }) {
-  // Materialize Date objects once so all the comparisons below avoid
-  // repeated string parsing.
   const entries = useMemo<NormalizedEntry[]>(
     () =>
       rawEntries.map((e) => ({
         ...e,
         createdAt:
-          e.createdAt instanceof Date ? e.createdAt : new Date(e.createdAt),
+          e.createdAt instanceof Date
+            ? e.createdAt
+            : new Date(e.createdAt),
+        targetDate:
+          e.targetDate == null
+            ? null
+            : e.targetDate instanceof Date
+              ? e.targetDate
+              : new Date(e.targetDate),
       })),
     [rawEntries],
   );
 
   const [search, setSearch] = useState("");
   const [sourceFilter, setSourceFilter] = useState<string | null>(null);
-  const [dateFilter, setDateFilter] = useState<DateFilter>("all");
+  const [fromDate, setFromDate] = useState<string>("");
+  const [toDate, setToDate] = useState<string>("");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
-  // "Now" only needs to be computed once per render; date math
-  // depends on it transitively through useMemo.
   const now = useMemo(() => new Date(), []);
 
-  // Apply date filter first — drives the source-chip counts so they
-  // reflect the current view.
-  const dateFiltered = useMemo(
-    () => entries.filter((e) => matchesDateFilter(e.createdAt, dateFilter, now)),
-    [entries, dateFilter, now],
-  );
+  // Apply date range filter (from / to inclusive).
+  const dateFiltered = useMemo(() => {
+    const from = parseDateInput(fromDate);
+    const to = parseDateInput(toDate);
+    if (!from && !to) return entries;
+    return entries.filter((e) => {
+      const c = e.createdAt;
+      if (from && c < from) return false;
+      if (to) {
+        // Inclusive end-of-day: bump `to` to next day midnight.
+        const toEndExclusive = new Date(to);
+        toEndExclusive.setDate(toEndExclusive.getDate() + 1);
+        if (c >= toEndExclusive) return false;
+      }
+      return true;
+    });
+  }, [entries, fromDate, toDate]);
 
-  // Apply search next — also reflected in source counts so users
-  // see exactly how many of their search results live in each source.
   const dateAndSearchFiltered = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return dateFiltered;
     return dateFiltered.filter(
       (e) =>
         e.title.toLowerCase().includes(q) ||
-        e.content.toLowerCase().includes(q),
+        e.content.toLowerCase().includes(q) ||
+        (e.assignedTo?.toLowerCase().includes(q) ?? false),
     );
   }, [dateFiltered, search]);
 
-  // Source chip counts are dynamic against (date + search) — but the
-  // chip totals don't include the source filter itself (otherwise the
-  // selected chip would always read "all entries").
   const sourceCounts = useMemo(() => {
     const counts: Record<string, number> = {};
     for (const e of dateAndSearchFiltered) {
@@ -146,13 +168,11 @@ export function KnowledgeBaseExplorer({
 
   const totalAfterDateAndSearch = dateAndSearchFiltered.length;
 
-  // Final list applies the source filter on top.
   const visible = useMemo(() => {
     if (!sourceFilter) return dateAndSearchFiltered;
     return dateAndSearchFiltered.filter((e) => e.source === sourceFilter);
   }, [dateAndSearchFiltered, sourceFilter]);
 
-  // Group into date buckets for the timeline.
   const groups = useMemo(() => {
     const order: DateBucket[] = ["today", "yesterday", "thisWeek", "older"];
     const map = new Map<DateBucket, NormalizedEntry[]>();
@@ -175,17 +195,25 @@ export function KnowledgeBaseExplorer({
     });
   }
 
+  function clearAllFilters() {
+    setSearch("");
+    setSourceFilter(null);
+    setFromDate("");
+    setToDate("");
+  }
+
+  function clearDateRange() {
+    setFromDate("");
+    setToDate("");
+  }
+
   const totalAcrossAll = entries.length;
+  const dateRangeActive = !!fromDate || !!toDate;
 
   return (
     <div>
       {/* Search */}
-      <div
-        style={{
-          position: "relative",
-          marginBottom: 20,
-        }}
-      >
+      <div style={{ position: "relative", marginBottom: 16 }}>
         <Search
           size={14}
           color="var(--mute)"
@@ -199,7 +227,7 @@ export function KnowledgeBaseExplorer({
         />
         <input
           type="text"
-          placeholder="Search titles and content…"
+          placeholder="Search title, content, or assignee…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           className="field"
@@ -207,17 +235,36 @@ export function KnowledgeBaseExplorer({
         />
       </div>
 
-      {/* Date filter */}
-      <FilterRow label="When">
-        {DATE_FILTERS.map((f) => (
-          <Chip
-            key={f.key}
-            active={dateFilter === f.key}
-            onClick={() => setDateFilter(f.key)}
+      {/* Date range */}
+      <FilterRow label="Date">
+        <input
+          type="date"
+          value={fromDate}
+          onChange={(e) => setFromDate(e.target.value)}
+          className="field num"
+          style={{ width: 160, padding: "8px 12px", fontSize: 13 }}
+          aria-label="From date"
+        />
+        <span className="mute-ink" style={{ fontSize: 13 }}>
+          →
+        </span>
+        <input
+          type="date"
+          value={toDate}
+          onChange={(e) => setToDate(e.target.value)}
+          className="field num"
+          style={{ width: 160, padding: "8px 12px", fontSize: 13 }}
+          aria-label="To date"
+        />
+        {dateRangeActive && (
+          <button
+            type="button"
+            onClick={clearDateRange}
+            className="pill pill-ghost pill-sm"
           >
-            {f.label}
-          </Chip>
-        ))}
+            Clear
+          </button>
+        )}
       </FilterRow>
 
       {/* Source filter */}
@@ -245,21 +292,41 @@ export function KnowledgeBaseExplorer({
         })}
       </FilterRow>
 
+      {/* Column headers */}
+      {visible.length > 0 && (
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: ENTRY_GRID,
+            gap: 16,
+            padding: "16px 0 8px",
+            color: "var(--mute)",
+            fontSize: 11,
+            letterSpacing: "0.04em",
+            textTransform: "uppercase",
+            borderBottom: "1px solid var(--line)",
+          }}
+        >
+          <span>Source</span>
+          <span>Title</span>
+          <span>Assigned to</span>
+          <span style={{ textAlign: "right" }}>Target</span>
+          <span style={{ textAlign: "right" }}>Created</span>
+          <span />
+        </div>
+      )}
+
       {/* Timeline */}
       {groups.length === 0 ? (
         <EmptyState
           totalAcrossAll={totalAcrossAll}
           search={search}
-          dateFilter={dateFilter}
+          dateRangeActive={dateRangeActive}
           sourceFilter={sourceFilter}
-          onClear={() => {
-            setSearch("");
-            setSourceFilter(null);
-            setDateFilter("all");
-          }}
+          onClear={clearAllFilters}
         />
       ) : (
-        <div style={{ marginTop: 8 }}>
+        <div>
           {groups.map((g) => (
             <DateGroupSection key={g.bucket} title={BUCKET_LABEL[g.bucket]}>
               {g.entries.map((e) => (
@@ -290,7 +357,7 @@ function FilterRow({
       style={{
         display: "flex",
         alignItems: "center",
-        gap: 12,
+        gap: 10,
         flexWrap: "wrap",
         marginBottom: 12,
       }}
@@ -301,7 +368,9 @@ function FilterRow({
       >
         {label}
       </span>
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+      <div
+        style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}
+      >
         {children}
       </div>
     </div>
@@ -337,13 +406,12 @@ function DateGroupSection({
   children: React.ReactNode;
 }) {
   return (
-    <section style={{ marginTop: 28 }}>
+    <section style={{ marginTop: 24 }}>
       <h3
         className="label"
         style={{
-          margin: "0 0 8px",
-          paddingBottom: 8,
-          borderBottom: "1px solid var(--line-2)",
+          margin: "0 0 4px",
+          paddingTop: 12,
           color: "var(--mute)",
         }}
       >
@@ -368,12 +436,18 @@ function EntryAccordion({
     ? `${entry.source} · ${entry.sourceTypeLabel}`
     : entry.source;
 
+  // Highlight overdue items (target in the past) so they stand out
+  // in the tracker view. Today and future use ink; past uses red.
+  const targetColor = (() => {
+    if (!entry.targetDate) return "var(--mute-2)";
+    const today = startOfDay(new Date());
+    const target = startOfDay(entry.targetDate);
+    if (target < today) return "var(--red)";
+    return "var(--ink)";
+  })();
+
   return (
-    <article
-      style={{
-        borderBottom: "1px solid var(--line)",
-      }}
-    >
+    <article style={{ borderBottom: "1px solid var(--line)" }}>
       <button
         type="button"
         onClick={onToggle}
@@ -381,7 +455,7 @@ function EntryAccordion({
         style={{
           width: "100%",
           display: "grid",
-          gridTemplateColumns: "150px 1fr 110px 20px",
+          gridTemplateColumns: ENTRY_GRID,
           gap: 16,
           alignItems: "center",
           padding: "16px 0",
@@ -409,32 +483,49 @@ function EntryAccordion({
         </span>
         <span
           style={{
-            fontSize: 15,
+            fontSize: 14,
             fontWeight: 500,
             overflow: "hidden",
             textOverflow: "ellipsis",
             whiteSpace: "nowrap",
             color: "var(--ink)",
           }}
+          title={entry.title}
         >
           {entry.title}
+        </span>
+        <span
+          style={{
+            fontSize: 13,
+            color: entry.assignedTo ? "var(--ink-2)" : "var(--mute-2)",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+          title={entry.assignedTo ?? "Unassigned"}
+        >
+          {entry.assignedTo ?? "—"}
+        </span>
+        <span
+          className="num"
+          style={{
+            fontSize: 12,
+            color: targetColor,
+            textAlign: "right",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {entry.targetDate ? formatDate(entry.targetDate) : "—"}
         </span>
         <span
           className="mute-ink num"
           style={{
             fontSize: 12,
             textAlign: "right",
+            whiteSpace: "nowrap",
           }}
         >
-          {entry.createdAt.toLocaleDateString(undefined, {
-            month: "short",
-            day: "numeric",
-          })}
-          {" · "}
-          {entry.createdAt.toLocaleTimeString(undefined, {
-            hour: "2-digit",
-            minute: "2-digit",
-          })}
+          {formatDate(entry.createdAt)}
         </span>
         <span style={{ color: "var(--mute)", display: "inline-flex" }}>
           {open ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
@@ -443,22 +534,63 @@ function EntryAccordion({
       {open && (
         <div
           style={{
-            paddingLeft: 166,
+            paddingLeft: 0,
+            paddingRight: 36,
             paddingBottom: 18,
             paddingTop: 0,
+            display: "grid",
+            gridTemplateColumns: "minmax(120px, 160px) 1fr",
+            gap: 16,
           }}
         >
-          <div
-            className="body"
-            style={{
-              fontSize: 14,
-              whiteSpace: "pre-wrap",
-              wordBreak: "break-word",
-              color: "var(--ink-2)",
-              maxWidth: 760,
-            }}
-          >
-            {entry.content}
+          <div />
+          <div>
+            <div
+              className="body"
+              style={{
+                fontSize: 14,
+                whiteSpace: "pre-wrap",
+                wordBreak: "break-word",
+                color: "var(--ink-2)",
+                maxWidth: 760,
+              }}
+            >
+              {entry.content}
+            </div>
+            {(entry.assignedTo || entry.targetDate) && (
+              <div
+                className="mute-ink"
+                style={{
+                  fontSize: 12,
+                  marginTop: 10,
+                  display: "flex",
+                  gap: 18,
+                  flexWrap: "wrap",
+                }}
+              >
+                {entry.assignedTo && (
+                  <span>
+                    <strong style={{ color: "var(--ink)" }}>
+                      Owner:
+                    </strong>{" "}
+                    {entry.assignedTo}
+                  </span>
+                )}
+                {entry.targetDate && (
+                  <span>
+                    <strong style={{ color: "var(--ink)" }}>
+                      Target:
+                    </strong>{" "}
+                    {entry.targetDate.toLocaleDateString(undefined, {
+                      weekday: "short",
+                      month: "short",
+                      day: "numeric",
+                      year: "numeric",
+                    })}
+                  </span>
+                )}
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -469,34 +601,25 @@ function EntryAccordion({
 function EmptyState({
   totalAcrossAll,
   search,
-  dateFilter,
+  dateRangeActive,
   sourceFilter,
   onClear,
 }: {
   totalAcrossAll: number;
   search: string;
-  dateFilter: DateFilter;
+  dateRangeActive: boolean;
   sourceFilter: string | null;
   onClear: () => void;
 }) {
-  const hasFilter =
-    !!search || dateFilter !== "all" || sourceFilter !== null;
+  const hasFilter = !!search || dateRangeActive || sourceFilter !== null;
 
   if (totalAcrossAll === 0) {
     return (
-      <div
-        style={{
-          padding: "60px 0",
-          textAlign: "center",
-        }}
-      >
+      <div style={{ padding: "60px 0", textAlign: "center" }}>
         <p className="body" style={{ margin: 0 }}>
           Nothing in the knowledge base yet.
         </p>
-        <p
-          className="mute-ink"
-          style={{ fontSize: 13, marginTop: 8 }}
-        >
+        <p className="mute-ink" style={{ fontSize: 13, marginTop: 8 }}>
           Run a transcript analysis, sync GitHub, or add a manual note
           above to start building it up.
         </p>

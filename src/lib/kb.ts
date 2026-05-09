@@ -20,6 +20,8 @@ type KbInput = {
   content: string;
   sourceRefId?: string | null;
   sourceTypeLabel?: string | null;
+  assignedTo?: string | null;
+  targetDate?: Date | null;
 };
 
 type DbLike = PrismaClient | Prisma.TransactionClient;
@@ -33,6 +35,8 @@ export async function addKnowledgeEntry(input: KbInput, client: DbLike = db) {
       content: input.content,
       sourceRefId: input.sourceRefId ?? null,
       sourceTypeLabel: input.sourceTypeLabel ?? null,
+      assignedTo: input.assignedTo ?? null,
+      targetDate: input.targetDate ?? null,
     },
   });
 }
@@ -53,6 +57,8 @@ export async function addKnowledgeEntries(
       content: e.content,
       sourceRefId: e.sourceRefId ?? null,
       sourceTypeLabel: e.sourceTypeLabel ?? null,
+      assignedTo: e.assignedTo ?? null,
+      targetDate: e.targetDate ?? null,
     })),
     skipDuplicates: true,
   });
