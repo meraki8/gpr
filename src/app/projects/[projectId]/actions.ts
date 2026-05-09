@@ -10,6 +10,7 @@ import { db } from "@/lib/db";
 import { sendInviteEmail } from "@/lib/email";
 import { ai, AI_MODEL } from "@/lib/ai";
 import { MatchAnalysis } from "@/lib/types";
+import { getBaseUrl } from "@/lib/url";
 
 const InviteSchema = z.object({
   projectId: z.string().min(1),
@@ -67,13 +68,12 @@ export async function inviteMember(formData: FormData) {
     },
   });
 
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
   await sendInviteEmail({
     to: email,
     inviterName: user.name ?? user.email,
     projectName: project.name,
     projectBrief: project.brief,
-    inviteUrl: `${appUrl}/invite/${token}`,
+    inviteUrl: `${getBaseUrl()}/invite/${token}`,
   });
 
   revalidatePath(`/projects/${projectId}`);
@@ -110,13 +110,12 @@ export async function resendInvite(inviteId: string) {
     data: { expiresAt: newExpiresAt },
   });
 
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
   await sendInviteEmail({
     to: invite.email,
     inviterName: user.name ?? user.email,
     projectName: invite.project.name,
     projectBrief: invite.project.brief,
-    inviteUrl: `${appUrl}/invite/${invite.token}`,
+    inviteUrl: `${getBaseUrl()}/invite/${invite.token}`,
   });
 
   revalidatePath(`/projects/${invite.projectId}`);
