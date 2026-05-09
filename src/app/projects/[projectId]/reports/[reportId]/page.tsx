@@ -1,34 +1,10 @@
 import Link from "next/link";
-import { AppHeader } from "@/components/app-header";
-import { getMatchReport } from "@/lib/data";
+import { AppShell } from "@/components/app-shell";
+import { Score } from "@/components/score";
+import { RefCard, cardKindFromCardType } from "@/components/ref-card";
+import { requireDbUser } from "@/lib/auth";
+import { getMatchReport, getMyGroups } from "@/lib/data";
 import { approveCard, dismissCard, publishReport } from "./actions";
-
-const CARD_THEME: Record<
-  string,
-  { label: string; chip: string; border: string }
-> = {
-  YELLOW: {
-    label: "Yellow",
-    chip: "bg-yellow-400 text-black",
-    border: "border-l-yellow-400",
-  },
-  RED: {
-    label: "Red",
-    chip: "bg-[#DC2626] text-white",
-    border: "border-l-[#DC2626]",
-  },
-  MVP: {
-    label: "MVP",
-    chip: "bg-white text-black",
-    border: "border-l-white",
-  },
-};
-
-const STATUS_BADGE: Record<string, string> = {
-  DRAFT: "bg-white/10 text-white/60",
-  APPROVED: "bg-emerald-500/20 text-emerald-300",
-  DISMISSED: "bg-white/5 text-white/30",
-};
 
 export default async function ReportPage({
   params,
@@ -36,247 +12,503 @@ export default async function ReportPage({
   params: Promise<{ projectId: string; reportId: string }>;
 }) {
   const { projectId, reportId } = await params;
-  const report = await getMatchReport(reportId);
-  const top = report.memberReports[0];
-  const draftCardCount = report.cards.filter((c) => c.status === "DRAFT").length;
+  const [user, allGroups, report] = await Promise.all([
+    requireDbUser(),
+    getMyGroups(),
+    getMatchReport(reportId),
+  ]);
+
+  const memberReports = report.memberReports;
+  const draftCardCount = report.cards.filter(
+    (c) => c.status === "DRAFT",
+  ).length;
+  const visibleCardCount = report.cards.length;
+  const teamScore = memberReports.length
+    ? Math.round(
+        memberReports.reduce((s, m) => s + m.contributionScore, 0) /
+          memberReports.length,
+      )
+    : 0;
+  const top = memberReports[0];
+
+  const headerLabel = `Match report · ${report.project.name} · ${report.createdAt.toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}`;
+  const titleDate = report.createdAt.toLocaleDateString(undefined, {
+    weekday: "long",
+    month: "long",
+    day: "numeric",
+  });
 
   return (
-    <main className="flex flex-1 flex-col">
-      <AppHeader />
-
-      {/* Hero band */}
-      <section className="px-8 py-20 border-b border-white/10 bg-gradient-to-b from-[#DC2626]/10 via-transparent to-transparent">
-        <div className="max-w-5xl mx-auto">
-          <Link
-            href={`/projects/${projectId}`}
-            className="font-mono text-xs tracking-[0.3em] uppercase text-white/40 hover:text-white/60 inline-block"
+    <AppShell
+      user={user}
+      groups={allGroups}
+      currentProject={{
+        id: report.project.id,
+        name: report.project.name,
+        group: {
+          id: report.project.group.id,
+          name: report.project.group.name,
+        },
+      }}
+    >
+      <main className="wrap-w" style={{ paddingBottom: 160 }}>
+        {/* Hero */}
+        <section style={{ padding: "80px 0 100px" }}>
+          <div
+            className="label fade-up"
+            style={{ marginBottom: 32, display: "flex", gap: 14 }}
           >
-            ← {report.project.name}
-          </Link>
-          <div className="flex items-center gap-3 mt-6 mb-2">
-            <p className="font-mono text-xs tracking-[0.3em] text-[#DC2626] uppercase">
-              Match Report
-            </p>
+            <span>{headerLabel}</span>
             <span
-              className={`font-mono text-xs uppercase tracking-widest px-2 py-1 ${
-                report.status === "PUBLISHED"
-                  ? "bg-white text-black"
-                  : "bg-white/10 text-white/60"
-              }`}
+              style={{
+                color:
+                  report.status === "PUBLISHED" ? "var(--ink)" : "var(--mute)",
+              }}
             >
-              {report.status}
+              · {report.status}
             </span>
           </div>
-          <h1 className="text-6xl md:text-7xl font-black tracking-tighter leading-none mb-8">
-            {report.createdAt.toLocaleDateString(undefined, {
-              weekday: "long",
-              month: "long",
-              day: "numeric",
-            })}
+          <h1
+            className="display fade-up"
+            style={{
+              fontSize: "clamp(56px, 9vw, 124px)",
+              margin: 0,
+              fontWeight: 500,
+              lineHeight: 0.92,
+            }}
+          >
+            {titleDate}.
           </h1>
-          <p className="text-xl md:text-2xl text-white/90 max-w-3xl leading-relaxed font-light">
-            {report.summary}
-          </p>
+
+          <div
+            className="fade-up"
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(3, 1fr)",
+              gap: 56,
+              marginTop: 80,
+              animationDelay: "100ms",
+            }}
+          >
+            <BigStat label="Team health" value={teamScore} />
+            <BigStat
+              label="Cards issued"
+              value={visibleCardCount}
+              sub={
+                visibleCardCount === 0
+                  ? "Clean week."
+                  : describeCards(report.cards)
+              }
+              color={visibleCardCount > 0 ? "var(--red)" : undefined}
+            />
+            <BigStat
+              label="Top contributor"
+              value={top?.user.name?.split(" ")[0] ?? "—"}
+              sub={top ? `Score ${top.contributionScore}` : undefined}
+              isText
+            />
+          </div>
 
           {report.isOwner && report.status === "DRAFT" && (
-            <div className="mt-10 flex items-center gap-4 flex-wrap">
+            <div
+              style={{
+                marginTop: 56,
+                display: "flex",
+                alignItems: "center",
+                gap: 16,
+                flexWrap: "wrap",
+              }}
+            >
               <form action={publishReport}>
                 <input type="hidden" name="reportId" value={report.id} />
-                <button
-                  type="submit"
-                  className="bg-[#DC2626] text-white px-6 py-3 font-medium hover:bg-[#B91C1C] transition"
-                >
-                  Publish to team
+                <button type="submit" className="pill pill-red">
+                  Publish to team →
                 </button>
               </form>
-              <p className="text-xs text-white/50 font-mono">
+              <span
+                className="mute-ink"
+                style={{ fontSize: 13 }}
+              >
                 {draftCardCount > 0
-                  ? `${draftCardCount} draft card${draftCardCount === 1 ? "" : "s"} still pending — approve or dismiss below first.`
-                  : "Team will see this report and only approved cards."}
-              </p>
+                  ? `${draftCardCount} draft card${draftCardCount === 1 ? "" : "s"} pending — approve or dismiss below first.`
+                  : "Team will see this report when published."}
+              </span>
             </div>
           )}
-        </div>
-      </section>
-
-      {/* Top scorer callout */}
-      {top && (
-        <section className="px-8 py-16 border-b border-white/10">
-          <div className="max-w-5xl mx-auto">
-            <p className="font-mono text-xs tracking-[0.3em] text-[#DC2626] uppercase mb-3">
-              Top contributor
-            </p>
-            <div className="flex items-baseline justify-between gap-4 flex-wrap">
-              <h2 className="text-4xl md:text-5xl font-black">
-                {top.user.name ?? top.user.email}
-              </h2>
-              <div className="font-mono text-7xl md:text-9xl font-black text-[#DC2626] leading-none">
-                {top.contributionScore}
-              </div>
-            </div>
-            {top.notes && (
-              <p className="text-white/60 mt-4 max-w-2xl">{top.notes}</p>
-            )}
-          </div>
         </section>
-      )}
 
-      {/* Full member breakdown */}
-      <section className="px-8 py-16 border-b border-white/10">
-        <div className="max-w-5xl mx-auto">
-          <h2 className="text-sm font-mono uppercase tracking-widest text-white/60 mb-6">
-            Full breakdown
-          </h2>
-          <ul className="grid gap-3">
-            {report.memberReports.map((mr) => (
-              <li
+        <hr className="hr" />
+
+        {/* The ref's note */}
+        <section style={{ padding: "100px 0" }}>
+          <div className="label" style={{ marginBottom: 32 }}>
+            The ref&rsquo;s note
+          </div>
+          <p
+            className="display"
+            style={{
+              fontSize: "clamp(28px, 4vw, 48px)",
+              margin: 0,
+              fontWeight: 400,
+              lineHeight: 1.2,
+              maxWidth: 1080,
+            }}
+          >
+            {report.summary}
+          </p>
+        </section>
+
+        <hr className="hr" />
+
+        {/* Per member */}
+        <section style={{ padding: "100px 0 60px" }}>
+          <div className="label" style={{ marginBottom: 56 }}>
+            Per member
+          </div>
+          {memberReports.map((mr, i) => {
+            const memberCards = report.cards.filter(
+              (c) => c.userId === mr.userId,
+            );
+            const dominant = memberCards[0]?.cardType;
+            const flag = dominant ? cardKindFromCardType(dominant) : null;
+            return (
+              <div
                 key={mr.id}
-                className="border border-white/10 bg-white/5 px-5 py-4"
+                className="fade-up row-hover"
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "60px 1fr 100px 110px 60px",
+                  gap: 32,
+                  padding: "28px 0",
+                  borderBottom: "1px solid var(--line)",
+                  alignItems: "center",
+                  animationDelay: `${i * 60}ms`,
+                }}
               >
-                <div className="flex items-baseline justify-between mb-2 gap-3 flex-wrap">
-                  <div className="font-medium">
+                <span
+                  className="num display mute-ink"
+                  style={{
+                    fontSize: 30,
+                    color:
+                      i === 0
+                        ? "var(--ink)"
+                        : i === memberReports.length - 1 && memberReports.length > 1
+                          ? "var(--red)"
+                          : "var(--mute-2)",
+                  }}
+                >
+                  {String(i + 1).padStart(2, "0")}
+                </span>
+                <div>
+                  <div className="h-s" style={{ marginBottom: 4 }}>
                     {mr.user.name ?? mr.user.email}
                   </div>
-                  <div className="flex items-baseline gap-4 font-mono text-sm">
-                    {mr.speakingTimePct !== null && (
-                      <span className="text-white/40 text-xs">
-                        {mr.speakingTimePct.toFixed(0)}% talk
-                      </span>
-                    )}
-                    <span className="text-white/40 text-xs uppercase">
-                      score
-                    </span>
-                    <span className="text-3xl font-black text-[#DC2626]">
-                      {mr.contributionScore}
-                    </span>
+                  <div className="mute-ink" style={{ fontSize: 13 }}>
+                    {mr.notes ?? "—"}
                   </div>
                 </div>
-                {mr.notes && (
-                  <p className="text-sm text-white/70 mb-3">{mr.notes}</p>
-                )}
-                {Array.isArray(mr.commitmentsJson) &&
-                  mr.commitmentsJson.length > 0 && (
-                    <div className="border-t border-white/10 mt-3 pt-3">
-                      <div className="text-xs font-mono uppercase tracking-widest text-white/40 mb-2">
-                        Commitments ({mr.commitmentsJson.length})
-                      </div>
-                      <ul className="space-y-3 text-sm">
-                        {(mr.commitmentsJson as Array<{
-                          text: string;
-                          due_date_iso: string | null;
-                          source_quote: string;
-                        }>).map((c, i) => (
-                          <li key={i} className="text-white/80">
-                            <div>
-                              {c.text}
-                              {c.due_date_iso && (
-                                <span className="text-white/40 font-mono ml-2 text-xs">
-                                  due{" "}
-                                  {new Date(c.due_date_iso).toLocaleDateString()}
-                                </span>
-                              )}
-                            </div>
-                            <div className="text-white/40 italic mt-1">
-                              &ldquo;{c.source_quote}&rdquo;
-                            </div>
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
+                <div style={{ textAlign: "right" }}>
+                  <Score
+                    value={mr.contributionScore}
+                    size={36}
+                    color={
+                      flag === "r"
+                        ? "var(--red)"
+                        : "var(--ink)"
+                    }
+                  />
+                </div>
+                <div
+                  className="num mute-ink"
+                  style={{ textAlign: "right", fontSize: 14 }}
+                >
+                  {mr.speakingTimePct !== null
+                    ? `${mr.speakingTimePct.toFixed(0)}% talk`
+                    : "—"}
+                </div>
+                <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                  {flag ? (
+                    <RefCard
+                      kind={flag}
+                      size={28}
+                      rotate={
+                        flag === "r" ? 4 : flag === "y" ? -4 : 0
+                      }
+                    />
+                  ) : (
+                    <span className="mute-ink">—</span>
                   )}
-              </li>
-            ))}
-          </ul>
-        </div>
-      </section>
+                </div>
+              </div>
+            );
+          })}
+        </section>
 
-      {/* Cards */}
-      <section className="px-8 py-16">
-        <div className="max-w-5xl mx-auto">
-          <h2 className="text-sm font-mono uppercase tracking-widest text-white/60 mb-6">
-            Cards
-            {report.isOwner && draftCardCount > 0 && (
-              <span className="text-[#DC2626] ml-3">
-                · {draftCardCount} pending review
-              </span>
-            )}
-          </h2>
+        {/* What was extracted (commitments) */}
+        {memberReports.some(
+          (mr) =>
+            Array.isArray(mr.commitmentsJson) &&
+            mr.commitmentsJson.length > 0,
+        ) && (
+          <section style={{ padding: "80px 0 0" }}>
+            <div className="label" style={{ marginBottom: 56 }}>
+              What was extracted
+            </div>
+            <div>
+              {memberReports.flatMap((mr) => {
+                const commitments = (mr.commitmentsJson as Array<{
+                  text: string;
+                  due_date_iso: string | null;
+                  source_quote: string;
+                }>) || [];
+                return commitments.map((c, ci) => ({
+                  ...c,
+                  who: mr.user.name ?? mr.user.email,
+                  key: `${mr.id}-${ci}`,
+                }));
+              }).map((f, i) => (
+                <div
+                  key={f.key}
+                  className="fade-up"
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "60px 200px 1fr",
+                    gap: 32,
+                    padding: "20px 0",
+                    borderBottom: "1px solid var(--line-2)",
+                    alignItems: "baseline",
+                    animationDelay: `${i * 30}ms`,
+                  }}
+                >
+                  <span
+                    className="num mute-ink"
+                    style={{ fontSize: 13 }}
+                  >
+                    {String(i + 1).padStart(2, "0")}
+                  </span>
+                  <span
+                    style={{ fontSize: 15, fontWeight: 500 }}
+                  >
+                    {f.who}
+                  </span>
+                  <div>
+                    <div
+                      className="body"
+                      style={{ fontSize: 15, color: "var(--ink-2)" }}
+                    >
+                      {f.text}
+                      {f.due_date_iso && (
+                        <span
+                          className="mute-ink num"
+                          style={{ fontSize: 12, marginLeft: 10 }}
+                        >
+                          due{" "}
+                          {new Date(f.due_date_iso).toLocaleDateString(
+                            undefined,
+                            { month: "short", day: "numeric" },
+                          )}
+                        </span>
+                      )}
+                    </div>
+                    <div
+                      className="mute-ink"
+                      style={{
+                        fontSize: 13,
+                        marginTop: 4,
+                        fontStyle: "italic",
+                      }}
+                    >
+                      &ldquo;{f.source_quote}&rdquo;
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {/* Cards (with approve/dismiss for owners) */}
+        <section style={{ padding: "100px 0 0" }}>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "baseline",
+              justifyContent: "space-between",
+              marginBottom: 32,
+            }}
+          >
+            <div className="label">
+              Cards
+              {report.isOwner && draftCardCount > 0 && (
+                <span
+                  style={{ color: "var(--red)", marginLeft: 12 }}
+                >
+                  · {draftCardCount} pending review
+                </span>
+              )}
+            </div>
+          </div>
           {report.cards.length === 0 ? (
-            <p className="text-white/50 italic">
+            <p className="body mute-ink" style={{ margin: 0 }}>
               {report.isOwner
                 ? "No cards drafted for this meeting."
                 : "No approved cards for this meeting."}
             </p>
           ) : (
-            <ul className="grid gap-3">
-              {report.cards.map((card) => {
-                const theme = CARD_THEME[card.cardType] ?? CARD_THEME.YELLOW;
-                const showActions =
-                  report.isOwner && card.status === "DRAFT";
-                return (
-                  <li
-                    key={card.id}
-                    className={`border border-white/10 border-l-4 ${theme.border} bg-white/5 px-5 py-5`}
-                  >
-                    <div className="flex items-start gap-5">
-                      <div
-                        className={`shrink-0 w-12 h-16 ${theme.chip} flex items-center justify-center font-black text-[10px] uppercase tracking-widest`}
+            report.cards.map((card) => {
+              const flag = cardKindFromCardType(card.cardType);
+              const showActions =
+                report.isOwner && card.status === "DRAFT";
+              return (
+                <div
+                  key={card.id}
+                  className="fade-up"
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "60px 1fr auto",
+                    gap: 32,
+                    padding: "24px 0",
+                    borderBottom: "1px solid var(--line)",
+                    alignItems: "center",
+                  }}
+                >
+                  <RefCard
+                    kind={flag}
+                    size={42}
+                    rotate={flag === "r" ? 4 : flag === "y" ? -4 : 0}
+                  />
+                  <div>
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "baseline",
+                        gap: 12,
+                        marginBottom: 4,
+                      }}
+                    >
+                      <span style={{ fontSize: 16, fontWeight: 500 }}>
+                        {card.user.name ?? card.user.email}
+                      </span>
+                      <span
+                        className="label"
+                        style={{
+                          color:
+                            card.status === "APPROVED"
+                              ? "#1c8c4d"
+                              : card.status === "DISMISSED"
+                                ? "var(--mute-2)"
+                                : "var(--mute)",
+                        }}
                       >
-                        {theme.label}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-baseline justify-between mb-2 gap-3 flex-wrap">
-                          <div className="font-medium">
-                            {card.user.name ?? card.user.email}
-                          </div>
-                          <span
-                            className={`font-mono text-xs uppercase tracking-widest px-2 py-0.5 ${
-                              STATUS_BADGE[card.status] ?? STATUS_BADGE.DRAFT
-                            }`}
-                          >
-                            {card.status}
-                          </span>
-                        </div>
-                        <p className="text-sm text-white/80">{card.reason}</p>
-                        {showActions && (
-                          <div className="flex gap-2 mt-4">
-                            <form action={approveCard}>
-                              <input
-                                type="hidden"
-                                name="cardId"
-                                value={card.id}
-                              />
-                              <button
-                                type="submit"
-                                className="bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 px-4 py-1.5 text-sm font-medium transition"
-                              >
-                                Approve
-                              </button>
-                            </form>
-                            <form action={dismissCard}>
-                              <input
-                                type="hidden"
-                                name="cardId"
-                                value={card.id}
-                              />
-                              <button
-                                type="submit"
-                                className="bg-white/5 hover:bg-white/10 text-white/60 px-4 py-1.5 text-sm font-medium transition"
-                              >
-                                Dismiss
-                              </button>
-                            </form>
-                          </div>
-                        )}
-                      </div>
+                        {card.status}
+                      </span>
                     </div>
-                  </li>
-                );
-              })}
-            </ul>
+                    <p
+                      className="body"
+                      style={{ margin: 0, fontSize: 14, color: "var(--ink-2)" }}
+                    >
+                      {card.reason}
+                    </p>
+                  </div>
+                  {showActions ? (
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <form action={approveCard}>
+                        <input type="hidden" name="cardId" value={card.id} />
+                        <button
+                          type="submit"
+                          className="pill pill-sm"
+                          style={{ background: "#1c8c4d" }}
+                        >
+                          Approve
+                        </button>
+                      </form>
+                      <form action={dismissCard}>
+                        <input type="hidden" name="cardId" value={card.id} />
+                        <button
+                          type="submit"
+                          className="pill pill-ghost pill-sm"
+                        >
+                          Dismiss
+                        </button>
+                      </form>
+                    </div>
+                  ) : (
+                    <span style={{ width: 1 }} />
+                  )}
+                </div>
+              );
+            })
           )}
+        </section>
+
+        <section
+          style={{
+            padding: "100px 0 0",
+            display: "flex",
+            gap: 14,
+          }}
+        >
+          <Link
+            href={`/projects/${projectId}`}
+            className="pill"
+            style={{ textDecoration: "none" }}
+          >
+            ← Back to project
+          </Link>
+        </section>
+      </main>
+    </AppShell>
+  );
+}
+
+function describeCards(cards: { cardType: string }[]): string {
+  const counts: Record<string, number> = {};
+  for (const c of cards) counts[c.cardType] = (counts[c.cardType] ?? 0) + 1;
+  const parts: string[] = [];
+  if (counts.YELLOW) parts.push(`${counts.YELLOW} yellow`);
+  if (counts.RED) parts.push(`${counts.RED} red`);
+  if (counts.MVP) parts.push(`${counts.MVP} MVP`);
+  return parts.join(" · ") || "—";
+}
+
+function BigStat({
+  label,
+  value,
+  sub,
+  color,
+  isText,
+}: {
+  label: string;
+  value: number | string;
+  sub?: string;
+  color?: string;
+  isText?: boolean;
+}) {
+  return (
+    <div>
+      <div className="label" style={{ marginBottom: 16 }}>
+        {label}
+      </div>
+      {isText ? (
+        <div
+          className="display"
+          style={{
+            fontSize: 64,
+            lineHeight: 0.9,
+            fontWeight: 500,
+            letterSpacing: "-0.02em",
+          }}
+        >
+          {value}
         </div>
-      </section>
-    </main>
+      ) : (
+        <Score value={value} size={88} color={color} />
+      )}
+      {sub && (
+        <div className="mute-ink" style={{ fontSize: 14, marginTop: 10 }}>
+          {sub}
+        </div>
+      )}
+    </div>
   );
 }

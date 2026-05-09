@@ -1,8 +1,11 @@
 import Link from "next/link";
-import { AppHeader } from "@/components/app-header";
+import { AppShell } from "@/components/app-shell";
+import { PageHead } from "@/components/page-head";
+import { Score } from "@/components/score";
+import { RefCard, cardKindFromCardType } from "@/components/ref-card";
 import { ResendInviteButton } from "@/components/resend-invite-button";
 import { requireDbUser } from "@/lib/auth";
-import { getProject } from "@/lib/data";
+import { getMyGroups, getProject } from "@/lib/data";
 import { analyzeTranscript, inviteMember } from "./actions";
 
 export default async function ProjectPage({
@@ -11,8 +14,9 @@ export default async function ProjectPage({
   params: Promise<{ projectId: string }>;
 }) {
   const { projectId } = await params;
-  const [user, project] = await Promise.all([
+  const [user, allGroups, project] = await Promise.all([
     requireDbUser(),
+    getMyGroups(),
     getProject(projectId),
   ]);
   const isOwner = project.members.some(
@@ -21,12 +25,9 @@ export default async function ProjectPage({
   const hasGithubSource = project.contributionSources.some(
     (s) => s.sourceType === "GITHUB",
   );
-  // Non-owners can't view DRAFT reports — getMatchReport 404s them.
-  // Filter the list so they only see clickable links that work.
   const visibleReports = isOwner
     ? project.matchReports
     : project.matchReports.filter((r) => r.status === "PUBLISHED");
-
   const daysUntilDeadline = project.deadline
     ? Math.ceil(
         (project.deadline.getTime() - Date.now()) / (1000 * 60 * 60 * 24),
@@ -34,136 +35,430 @@ export default async function ProjectPage({
     : null;
 
   return (
-    <main className="flex flex-1 flex-col">
-      <AppHeader />
-      <section className="flex-1 px-8 py-12 max-w-5xl mx-auto w-full">
-        <Link
-          href={`/groups/${project.group.id}`}
-          className="font-mono text-xs tracking-[0.3em] uppercase text-white/40 hover:text-white/60 mb-4 inline-block"
+    <AppShell
+      user={user}
+      groups={allGroups}
+      currentProject={{
+        id: project.id,
+        name: project.name,
+        group: { id: project.group.id, name: project.group.name },
+      }}
+    >
+      <main className="wrap-w" style={{ paddingBottom: 160 }}>
+        <PageHead
+          eyebrow={`Project · ${project.group.name}`}
+          title={`${project.name}.`}
+          sub={project.brief}
+          right={
+            isOwner ? (
+              <a
+                href="#analyze"
+                className="pill"
+                style={{ textDecoration: "none" }}
+              >
+                Analyse a transcript →
+              </a>
+            ) : null
+          }
+        />
+
+        {/* Stats */}
+        <section
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(3, 1fr)",
+            gap: 56,
+            paddingBottom: 60,
+            borderBottom: "1px solid var(--line)",
+          }}
         >
-          ← {project.group.name}
-        </Link>
-        <p className="font-mono text-xs tracking-[0.3em] text-[#DC2626] uppercase mb-2">
-          Project
-        </p>
-        <h1 className="text-4xl font-bold mb-3">{project.name}</h1>
-        <p className="text-white/70 mb-8 max-w-3xl whitespace-pre-line">
-          {project.brief}
-        </p>
+          <Stat
+            label="Project health"
+            value={project.healthScore}
+            sub={
+              daysUntilDeadline !== null
+                ? deadlineSub(daysUntilDeadline)
+                : "No deadline set"
+            }
+            color={
+              project.healthScore >= 80
+                ? "var(--ink)"
+                : project.healthScore >= 60
+                  ? "#c89014"
+                  : "var(--red)"
+            }
+          />
+          <Stat
+            label="Members"
+            value={project.members.length}
+            sub={
+              project.invites.length > 0
+                ? `${project.invites.length} invite${project.invites.length === 1 ? "" : "s"} pending`
+                : "All accepted"
+            }
+          />
+          <Stat
+            label="Reports filed"
+            value={visibleReports.length}
+            sub={
+              isOwner && project.matchReports.length > visibleReports.length
+                ? `${project.matchReports.length - visibleReports.length} drafted`
+                : "Across all stand-ups"
+            }
+          />
+        </section>
 
-        <div className="grid gap-6 md:grid-cols-3 mb-12">
-          <div className="border border-white/10 bg-white/5 px-5 py-4">
-            <div className="text-xs font-mono uppercase tracking-widest text-white/40 mb-1">
-              Deadline
-            </div>
-            <div className="font-medium">
-              {project.deadline
-                ? project.deadline.toLocaleDateString()
-                : "Not set"}
-            </div>
-            {daysUntilDeadline !== null && (
-              <div
-                className={`text-xs font-mono mt-1 ${
-                  daysUntilDeadline < 0
-                    ? "text-[#DC2626]"
-                    : daysUntilDeadline < 7
-                    ? "text-yellow-400"
-                    : "text-white/50"
-                }`}
-              >
-                {daysUntilDeadline < 0
-                  ? `${Math.abs(daysUntilDeadline)} day${Math.abs(daysUntilDeadline) === 1 ? "" : "s"} overdue`
-                  : daysUntilDeadline === 0
-                  ? "Due today"
-                  : `${daysUntilDeadline} day${daysUntilDeadline === 1 ? "" : "s"} left`}
-              </div>
-            )}
+        {/* Leaderboard */}
+        <section style={{ padding: "100px 0 0" }}>
+          <div className="label" style={{ marginBottom: 32 }}>
+            Leaderboard
           </div>
-          <div className="border border-white/10 bg-white/5 px-5 py-4">
-            <div className="text-xs font-mono uppercase tracking-widest text-white/40 mb-1">
-              Health
-            </div>
-            <div className="font-medium">{project.healthScore}/100</div>
-          </div>
-          <div className="border border-white/10 bg-white/5 px-5 py-4">
-            <div className="text-xs font-mono uppercase tracking-widest text-white/40 mb-1">
-              Members
-            </div>
-            <div className="font-medium">{project.members.length}</div>
-          </div>
-        </div>
-
-        <h2 className="text-sm font-mono uppercase tracking-widest text-white/60 mb-4">
-          Leaderboard
-        </h2>
-        <ul className="grid gap-2 mb-12">
           {project.members.map((m, i) => (
-            <li
+            <div
               key={m.id}
-              className={`flex items-center gap-4 border px-4 py-3 ${
-                i === 0 && m.contributionScore > 0
-                  ? "bg-[#DC2626]/5 border-[#DC2626]/40"
-                  : "border-white/10"
-              }`}
+              className="fade-up"
+              style={{
+                display: "grid",
+                gridTemplateColumns: "60px 1fr 100px 110px",
+                gap: 32,
+                padding: "26px 0",
+                borderBottom: "1px solid var(--line)",
+                alignItems: "center",
+                animationDelay: `${i * 40}ms`,
+              }}
             >
-              <div
-                className={`font-mono text-2xl font-black w-8 text-center shrink-0 ${
-                  i === 0 && m.contributionScore > 0
-                    ? "text-[#DC2626]"
-                    : "text-white/30"
-                }`}
+              <span
+                className="num display"
+                style={{
+                  fontSize: 30,
+                  color:
+                    i === 0 && m.contributionScore > 0
+                      ? "var(--ink)"
+                      : "var(--mute-2)",
+                }}
               >
-                {i + 1}
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="font-medium truncate">
-                  {m.user.name ?? m.user.email}
-                </div>
-                <div className="text-xs font-mono text-white/40 truncate">
+                {String(i + 1).padStart(2, "0")}
+              </span>
+              <div>
+                <div className="h-s">{m.user.name ?? m.user.email}</div>
+                <div className="mute-ink" style={{ fontSize: 13 }}>
                   {m.role.toLowerCase()} · {m.user.email}
                 </div>
               </div>
-              <div className="font-mono text-3xl font-black text-[#DC2626] tabular-nums shrink-0">
-                {m.contributionScore}
+              <div style={{ textAlign: "right" }}>
+                <Score
+                  value={m.contributionScore}
+                  size={36}
+                  color={
+                    m.contributionScore > 0 ? "var(--ink)" : "var(--mute-2)"
+                  }
+                />
               </div>
-            </li>
+              <div
+                className="mute-ink num"
+                style={{ textAlign: "right", fontSize: 13 }}
+              >
+                joined{" "}
+                {m.joinedAt.toLocaleDateString(undefined, {
+                  month: "short",
+                  day: "numeric",
+                })}
+              </div>
+            </div>
           ))}
-        </ul>
-        <p className="text-xs text-white/40 mb-12 font-mono -mt-10">
-          Scores are the average across all published Match Reports. Publish a
-          report to update the leaderboard.
-        </p>
+          <p
+            className="mute-ink"
+            style={{ fontSize: 12, marginTop: 14 }}
+          >
+            Scores are the average across all published Match Reports.
+          </p>
+        </section>
 
-        <div className="border-t border-white/10 pt-8 mb-12">
-          <h2 className="text-sm font-mono uppercase tracking-widest text-white/60 mb-4">
+        {/* Match reports */}
+        <section style={{ padding: "100px 0 0" }}>
+          <div className="label" style={{ marginBottom: 32 }}>
+            Match reports
+          </div>
+          {visibleReports.length === 0 ? (
+            <p className="body mute-ink" style={{ margin: 0 }}>
+              {isOwner
+                ? "No reports yet. Paste a transcript below to file the first one."
+                : "No published reports yet. The project owner publishes after reviewing the AI-drafted cards."}
+            </p>
+          ) : (
+            visibleReports.map((r, i) => (
+              <Link
+                key={r.id}
+                href={`/projects/${project.id}/reports/${r.id}`}
+                className="row-hover fade-up"
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "180px 1fr 80px 28px",
+                  gap: 32,
+                  padding: "24px 0",
+                  borderBottom: "1px solid var(--line)",
+                  alignItems: "baseline",
+                  animationDelay: `${i * 40}ms`,
+                }}
+              >
+                <span
+                  className="num"
+                  style={{
+                    fontSize: 14,
+                    color: "var(--ink)",
+                  }}
+                >
+                  {r.createdAt.toLocaleDateString(undefined, {
+                    weekday: "short",
+                    month: "short",
+                    day: "numeric",
+                  })}
+                </span>
+                <span
+                  className="body"
+                  style={{
+                    fontSize: 15,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    display: "-webkit-box",
+                    WebkitLineClamp: 2,
+                    WebkitBoxOrient: "vertical",
+                  }}
+                >
+                  {r.summary}
+                </span>
+                <span
+                  className="label"
+                  style={{
+                    color:
+                      r.status === "DRAFT" ? "var(--mute)" : "var(--ink)",
+                  }}
+                >
+                  {r.status}
+                </span>
+                <span
+                  className="mute-ink"
+                  style={{ fontSize: 16, textAlign: "right" }}
+                >
+                  →
+                </span>
+              </Link>
+            ))
+          )}
+        </section>
+
+        {/* Recent cards */}
+        {project.cards.length > 0 && (
+          <section style={{ padding: "100px 0 0" }}>
+            <div className="label" style={{ marginBottom: 32 }}>
+              Recent cards
+            </div>
+            {project.cards.map((c) => (
+              <div
+                key={c.id}
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "60px 1fr 140px",
+                  gap: 32,
+                  padding: "20px 0",
+                  borderBottom: "1px solid var(--line-2)",
+                  alignItems: "center",
+                }}
+              >
+                <RefCard
+                  kind={cardKindFromCardType(c.cardType)}
+                  size={28}
+                  rotate={c.cardType === "RED" ? 4 : c.cardType === "YELLOW" ? -4 : 0}
+                />
+                <div>
+                  <div style={{ fontSize: 15, fontWeight: 500 }}>
+                    {c.user.name ?? c.user.email}
+                  </div>
+                  <div
+                    className="mute-ink"
+                    style={{ fontSize: 14, marginTop: 2 }}
+                  >
+                    {c.reason}
+                  </div>
+                </div>
+                <span
+                  className="mute-ink num"
+                  style={{ textAlign: "right", fontSize: 12 }}
+                >
+                  {c.createdAt.toLocaleDateString(undefined, {
+                    month: "short",
+                    day: "numeric",
+                  })}
+                </span>
+              </div>
+            ))}
+          </section>
+        )}
+
+        {/* Sprint progress (GitHub events) */}
+        <section style={{ padding: "100px 0 0" }}>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "baseline",
+              justifyContent: "space-between",
+              marginBottom: 32,
+            }}
+          >
+            <div className="label">Sprint progress</div>
+            {isOwner && (
+              <Link
+                href={`/projects/${project.id}/sources`}
+                className="lk-mute"
+                style={{ fontSize: 13 }}
+              >
+                Manage sources →
+              </Link>
+            )}
+          </div>
+          {project.contributionEvents.length === 0 ? (
+            <div style={{ paddingTop: 8 }}>
+              <p
+                className="body mute-ink"
+                style={{ margin: 0, marginBottom: 14 }}
+              >
+                {hasGithubSource
+                  ? "GitHub source connected. Hit Sync on the sources page to pull recent commits and PRs."
+                  : "Connect a GitHub repo to start tracking commits and PRs."}
+              </p>
+              {isOwner && (
+                <Link
+                  href={`/projects/${project.id}/sources`}
+                  className="pill pill-ghost pill-sm"
+                  style={{ textDecoration: "none" }}
+                >
+                  {hasGithubSource ? "Open sources" : "Connect GitHub"}
+                </Link>
+              )}
+            </div>
+          ) : (
+            project.contributionEvents.map((e, i) => {
+              const payload = e.payloadJson as {
+                login?: string;
+                message?: string;
+                title?: string;
+                url?: string;
+                repo?: string;
+              };
+              const matched = e.userId
+                ? project.members.find((m) => m.userId === e.userId)
+                : null;
+              const displayName = matched
+                ? (matched.user.name ?? matched.user.email)
+                : (payload.login ?? "unknown");
+              return (
+                <div
+                  key={e.id}
+                  className="fade-up"
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "100px 100px 160px 1fr",
+                    gap: 32,
+                    padding: "16px 0",
+                    borderBottom: "1px solid var(--line-2)",
+                    alignItems: "baseline",
+                    animationDelay: `${i * 24}ms`,
+                  }}
+                >
+                  <span
+                    className="mute-ink num"
+                    style={{ fontSize: 12 }}
+                  >
+                    {e.occurredAt.toLocaleDateString(undefined, {
+                      month: "short",
+                      day: "numeric",
+                    })}
+                  </span>
+                  <span
+                    className="label"
+                    style={{ color: "var(--red)" }}
+                  >
+                    {e.eventType}
+                  </span>
+                  <span
+                    className="truncate"
+                    style={{
+                      fontSize: 14,
+                      fontWeight: 500,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {displayName}
+                  </span>
+                  <a
+                    href={payload.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="lk-mute"
+                    style={{
+                      fontSize: 14,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                      display: "block",
+                    }}
+                  >
+                    {payload.title ?? payload.message ?? "—"}
+                  </a>
+                </div>
+              );
+            })
+          )}
+        </section>
+
+        {/* Invite */}
+        <section style={{ padding: "100px 0 0", maxWidth: 720 }}>
+          <div className="label" style={{ marginBottom: 24 }}>
             Invite a member
-          </h2>
-          <form action={inviteMember} className="flex gap-2 max-w-md">
+          </div>
+          <form
+            action={inviteMember}
+            style={{ display: "flex", gap: 10 }}
+          >
             <input type="hidden" name="projectId" value={project.id} />
             <input
               type="email"
               name="email"
               placeholder="teammate@example.com"
               required
-              className="flex-1 bg-black border border-white/20 px-4 py-2 focus:border-[#DC2626] focus:outline-none"
+              className="field"
+              style={{ flex: 1 }}
             />
-            <button
-              type="submit"
-              className="bg-[#DC2626] text-white px-5 py-2 font-medium hover:bg-[#B91C1C] transition"
-            >
-              Send invite
+            <button type="submit" className="pill pill-sm">
+              Send →
             </button>
           </form>
-          <p className="text-xs text-white/40 mt-2 font-mono">
+          <p
+            className="mute-ink"
+            style={{ fontSize: 13, marginTop: 10 }}
+          >
             Recipient gets an email with a 7-day accept link.
           </p>
 
           {project.invites.length > 0 && (
-            <div className="mt-6">
-              <h3 className="text-xs font-mono uppercase tracking-widest text-white/40 mb-2">
-                Pending invites · {project.invites.length}
-              </h3>
-              <ul className="grid gap-1">
+            <div style={{ marginTop: 32 }}>
+              <div
+                className="label"
+                style={{ marginBottom: 14, color: "var(--mute)" }}
+              >
+                Pending · {project.invites.length}
+              </div>
+              <ul
+                style={{
+                  listStyle: "none",
+                  padding: 0,
+                  margin: 0,
+                  display: "grid",
+                  gap: 0,
+                }}
+              >
                 {project.invites.map((inv) => {
                   const daysLeft = Math.max(
                     0,
@@ -175,15 +470,23 @@ export default async function ProjectPage({
                   return (
                     <li
                       key={inv.id}
-                      className="flex items-center justify-between gap-3 border border-white/10 px-3 py-2 text-sm"
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        padding: "12px 0",
+                        borderBottom: "1px solid var(--line-2)",
+                        gap: 12,
+                      }}
                     >
-                      <div className="min-w-0 flex-1">
-                        <span className="text-white/40 font-mono text-xs">
-                          Invite sent to{" "}
-                        </span>
-                        <span className="font-mono truncate">{inv.email}</span>
-                      </div>
-                      <span className="text-xs font-mono text-white/40 shrink-0">
+                      <span style={{ fontSize: 14, flex: 1, minWidth: 0 }}>
+                        <span className="mute-ink">Invite sent to </span>
+                        <span style={{ fontWeight: 500 }}>{inv.email}</span>
+                      </span>
+                      <span
+                        className="mute-ink num"
+                        style={{ fontSize: 12 }}
+                      >
                         {daysLeft} day{daysLeft === 1 ? "" : "s"} left
                       </span>
                       <ResendInviteButton inviteId={inv.id} />
@@ -193,190 +496,92 @@ export default async function ProjectPage({
               </ul>
             </div>
           )}
-        </div>
+        </section>
 
+        {/* Analyze (owner only) */}
         {isOwner && (
-          <div className="border-t border-white/10 pt-8 mb-12">
-            <h2 className="text-sm font-mono uppercase tracking-widest text-white/60 mb-4">
-              Analyze a meeting transcript
-            </h2>
-            <form action={analyzeTranscript} className="grid gap-3">
+          <section
+            id="analyze"
+            style={{ padding: "100px 0 0" }}
+          >
+            <div className="label" style={{ marginBottom: 24 }}>
+              Analyse a meeting transcript
+            </div>
+            <p
+              className="body mute-ink"
+              style={{ margin: 0, marginBottom: 24, maxWidth: 540 }}
+            >
+              Paste the transcript. The ref reads it against the project,
+              quotes commitments verbatim, and drafts cards for whoever
+              needs them.
+            </p>
+            <form action={analyzeTranscript} style={{ display: "grid", gap: 16 }}>
               <input type="hidden" name="projectId" value={project.id} />
               <textarea
                 name="rawText"
-                placeholder="Paste the meeting transcript here. Speaker labels help (e.g. 'Alice: I'll have the wireframes by Friday'). The longer and more detailed, the better the analysis."
+                placeholder="[00:00] Maya: Atlas standup, May 9. Quick round.
+[00:18] Maya: I'll have the API contract finalized by Thursday EOD."
                 required
-                rows={8}
+                rows={10}
                 minLength={20}
-                className="bg-black border border-white/20 px-4 py-3 focus:border-[#DC2626] focus:outline-none resize-none font-mono text-sm leading-relaxed"
+                className="field field-lg num"
+                style={{ resize: "vertical" }}
               />
-              <div className="flex items-center gap-4">
-                <button
-                  type="submit"
-                  className="bg-[#DC2626] text-white px-6 py-2 font-medium hover:bg-[#B91C1C] transition"
-                >
-                  Run analysis
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: 14,
+                }}
+              >
+                <span className="mute-ink" style={{ fontSize: 13 }}>
+                  Average time to verdict: 14 seconds.
+                </span>
+                <button type="submit" className="pill pill-red">
+                  Analyse →
                 </button>
-                <p className="text-xs text-white/40 font-mono">
-                  Takes ~10&ndash;30 seconds. Generates a draft Match Report.
-                </p>
               </div>
             </form>
-          </div>
+          </section>
         )}
+      </main>
+    </AppShell>
+  );
+}
 
-        <div className="border-t border-white/10 pt-8">
-          <h2 className="text-sm font-mono uppercase tracking-widest text-white/60 mb-4">
-            Match Reports
-          </h2>
-          {visibleReports.length === 0 ? (
-            <p className="text-white/50 italic">
-              {isOwner
-                ? "No reports yet. Paste a transcript above to generate the first one."
-                : "No published reports yet. The project owner publishes reports after reviewing the AI-drafted cards."}
-            </p>
-          ) : (
-            <ul className="grid gap-3">
-              {visibleReports.map((r) => (
-                <li key={r.id}>
-                  <Link
-                    href={`/projects/${project.id}/reports/${r.id}`}
-                    className="block border border-white/10 bg-white/5 hover:bg-white/10 px-5 py-4 transition"
-                  >
-                    <div className="flex items-baseline justify-between mb-1">
-                      <div className="font-medium">
-                        {r.createdAt.toLocaleString()}
-                      </div>
-                      <div className="text-xs font-mono uppercase tracking-widest text-white/40">
-                        {r.status}
-                      </div>
-                    </div>
-                    <div className="text-xs font-mono text-white/50">
-                      {r._count.memberReports} member report
-                      {r._count.memberReports === 1 ? "" : "s"} ·{" "}
-                      {r._count.cards} card
-                      {r._count.cards === 1 ? "" : "s"}
-                    </div>
-                    <p className="text-sm text-white/70 mt-2 line-clamp-2">
-                      {r.summary}
-                    </p>
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          )}
+function deadlineSub(daysUntil: number): string {
+  if (daysUntil < 0)
+    return `${Math.abs(daysUntil)} day${Math.abs(daysUntil) === 1 ? "" : "s"} overdue`;
+  if (daysUntil === 0) return "Due today";
+  return `${daysUntil} day${daysUntil === 1 ? "" : "s"} left`;
+}
+
+function Stat({
+  label,
+  value,
+  sub,
+  color,
+}: {
+  label: string;
+  value: number | string;
+  sub?: string;
+  color?: string;
+}) {
+  return (
+    <div>
+      <div className="label" style={{ marginBottom: 16 }}>
+        {label}
+      </div>
+      <Score value={value} size={88} color={color} />
+      {sub && (
+        <div
+          className="mute-ink"
+          style={{ fontSize: 14, marginTop: 10 }}
+        >
+          {sub}
         </div>
-
-        {project.cards.length > 0 && (
-          <div className="border-t border-white/10 pt-8 mt-12">
-            <h2 className="text-sm font-mono uppercase tracking-widest text-white/60 mb-4">
-              Recent cards
-            </h2>
-            <ul className="grid gap-2">
-              {project.cards.map((card) => {
-                const cardClass =
-                  card.cardType === "RED"
-                    ? "border-l-[#DC2626]"
-                    : card.cardType === "MVP"
-                      ? "border-l-white"
-                      : "border-l-yellow-400";
-                return (
-                  <li
-                    key={card.id}
-                    className={`border border-white/10 border-l-4 ${cardClass} bg-white/5 px-4 py-3`}
-                  >
-                    <div className="flex items-baseline justify-between mb-1 gap-3 flex-wrap">
-                      <div className="font-medium">
-                        {card.user.name ?? card.user.email}
-                      </div>
-                      <div className="text-xs font-mono uppercase tracking-widest text-white/40">
-                        {card.cardType} ·{" "}
-                        {card.createdAt.toLocaleDateString()}
-                      </div>
-                    </div>
-                    <p className="text-sm text-white/70">{card.reason}</p>
-                  </li>
-                );
-              })}
-            </ul>
-          </div>
-        )}
-
-        <div className="border-t border-white/10 pt-8 mt-12">
-          <div className="flex items-baseline justify-between mb-4 gap-3 flex-wrap">
-            <h2 className="text-sm font-mono uppercase tracking-widest text-white/60">
-              Sprint progress
-            </h2>
-            {isOwner && (
-              <Link
-                href={`/projects/${project.id}/sources`}
-                className="font-mono text-xs uppercase tracking-widest text-white/50 hover:text-white"
-              >
-                Manage sources →
-              </Link>
-            )}
-          </div>
-          {project.contributionEvents.length === 0 ? (
-            <div className="border border-dashed border-white/20 px-6 py-10 text-center">
-              <p className="text-white/60 mb-3">
-                {hasGithubSource
-                  ? "GitHub source configured. Hit “Sync now” on the sources page to pull commits."
-                  : "Connect a GitHub repo to start tracking commits and PRs."}
-              </p>
-              {isOwner && (
-                <Link
-                  href={`/projects/${project.id}/sources`}
-                  className="inline-block bg-white text-black px-4 py-2 font-medium text-sm"
-                >
-                  {hasGithubSource ? "Open sources" : "Connect GitHub"}
-                </Link>
-              )}
-            </div>
-          ) : (
-            <ul className="grid gap-1 font-mono text-sm">
-              {project.contributionEvents.map((e) => {
-                const payload = e.payloadJson as {
-                  login?: string;
-                  message?: string;
-                  title?: string;
-                  url?: string;
-                  repo?: string;
-                };
-                const matchedMember = e.userId
-                  ? project.members.find((m) => m.userId === e.userId)
-                  : null;
-                const displayName = matchedMember
-                  ? (matchedMember.user.name ?? matchedMember.user.email)
-                  : (payload.login ?? "unknown");
-                return (
-                  <li
-                    key={e.id}
-                    className="flex items-baseline gap-3 text-white/70 border-b border-white/5 py-2"
-                  >
-                    <span className="text-white/30 text-xs w-20 shrink-0">
-                      {e.occurredAt.toLocaleDateString()}
-                    </span>
-                    <span className="text-[#DC2626] uppercase text-xs w-24 shrink-0">
-                      {e.eventType}
-                    </span>
-                    <span className="text-white/60 shrink-0 truncate max-w-[200px]">
-                      {displayName}
-                    </span>
-                    <a
-                      href={payload.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="truncate text-white/80 hover:text-white"
-                    >
-                      {payload.title ?? payload.message ?? "—"}
-                    </a>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-        </div>
-      </section>
-    </main>
+      )}
+    </div>
   );
 }

@@ -1,26 +1,285 @@
 @import "tailwindcss";
 
+/* =========== Design tokens (Tailwind v4 @theme) =========== */
+@theme {
+  --color-bg: #fafaf7;
+  --color-ink: #0a0a0a;
+  --color-ink-2: #1c1c1a;
+  --color-mute: #8a8a85;
+  --color-mute-2: #b8b8b3;
+  --color-line: #e5e3dc;
+  --color-line-2: #ececea;
+  --color-paper: #ffffff;
+  --color-ref-red: #e10600;
+  --color-ref-yellow: #f5c518;
+  --color-good: #1c8c4d;
+  --color-watch: #c89014;
+
+  --font-sans: var(--font-bricolage), "Bricolage Grotesque", system-ui,
+    sans-serif;
+  --font-display: var(--font-bricolage), "Bricolage Grotesque", system-ui,
+    sans-serif;
+}
+
+/* =========== Plain CSS variables (for styles that need them) =========== */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --bg: #fafaf7;
+  --ink: #0a0a0a;
+  --ink-2: #1c1c1a;
+  --mute: #8a8a85;
+  --mute-2: #b8b8b3;
+  --line: #e5e3dc;
+  --line-2: #ececea;
+  --paper: #ffffff;
+  --red: #e10600;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+* {
+  box-sizing: border-box;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--ink);
+  -webkit-font-smoothing: antialiased;
+  font-feature-settings: "ss01", "ss02";
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-bricolage), "Bricolage Grotesque", system-ui,
+    sans-serif;
+  font-size: 15px;
+  line-height: 1.55;
+  font-variation-settings: "wdth" 100, "opsz" 14;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+::selection {
+  background: var(--red);
+  color: #fff;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--line);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--mute);
+}
+
+/* =========== Typography utility classes =========== */
+
+.display {
+  font-weight: 500;
+  letter-spacing: -0.035em;
+  line-height: 0.94;
+  font-variation-settings: "wdth" 90, "opsz" 96;
+}
+.h-xl {
+  font-size: clamp(56px, 9vw, 124px);
+}
+.h-l {
+  font-size: clamp(40px, 5vw, 72px);
+}
+.h-m {
+  font-size: clamp(28px, 3.4vw, 44px);
+  font-variation-settings: "wdth" 95, "opsz" 32;
+  letter-spacing: -0.02em;
+  line-height: 1.05;
+}
+.h-s {
+  font-size: 22px;
+  font-weight: 500;
+  letter-spacing: -0.012em;
+  line-height: 1.15;
+}
+.body {
+  font-size: 16px;
+  line-height: 1.55;
+  color: var(--ink-2);
+}
+.body-lg {
+  font-size: 19px;
+  line-height: 1.5;
+  color: var(--ink-2);
+  font-weight: 350;
+}
+.label {
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--mute);
+  font-weight: 500;
+}
+.num {
+  font-feature-settings: "tnum";
+  font-variant-numeric: tabular-nums;
+}
+
+.red-ink {
+  color: var(--red);
+}
+.mute-ink {
+  color: var(--mute);
+}
+
+/* =========== Hairline rule =========== */
+.hr {
+  height: 1px;
+  background: var(--line);
+  border: 0;
+  margin: 0;
+}
+
+/* =========== Link / button atoms =========== */
+.lk {
+  color: var(--ink);
+  border-bottom: 1px solid var(--ink);
+  padding-bottom: 1px;
+  transition: color 0.12s, border-color 0.12s;
+}
+.lk:hover {
+  color: var(--red);
+  border-color: var(--red);
+}
+.lk-mute {
+  color: var(--mute);
+  transition: color 0.12s;
+}
+.lk-mute:hover {
+  color: var(--ink);
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 16px;
+  border-radius: 999px;
+  background: var(--ink);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 500;
+  transition: background 0.15s;
+  cursor: pointer;
+  border: none;
+  font-family: inherit;
+}
+.pill:hover {
+  background: var(--red);
+}
+.pill-ghost {
+  background: transparent;
+  color: var(--ink);
+  border: 1px solid var(--ink);
+}
+.pill-ghost:hover {
+  background: var(--ink);
+  color: #fff;
+}
+.pill-red {
+  background: var(--red);
+  color: #fff;
+}
+.pill-red:hover {
+  background: #b00400;
+}
+.pill-sm {
+  padding: 6px 12px;
+  font-size: 12px;
+}
+.pill:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  background: var(--mute-2);
+}
+.pill:disabled:hover {
+  background: var(--mute-2);
+}
+
+/* =========== Containers =========== */
+.wrap {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 0 40px;
+}
+.wrap-w {
+  max-width: 1320px;
+  margin: 0 auto;
+  padding: 0 40px;
+}
+
+/* =========== Status dots =========== */
+.dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+/* =========== Hover row =========== */
+.row-hover {
+  transition: background 0.12s;
+}
+.row-hover:hover {
+  background: rgba(0, 0, 0, 0.025);
+  cursor: pointer;
+}
+
+/* =========== Animations =========== */
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.fade-up {
+  animation: fade-up 0.45s cubic-bezier(0.2, 0, 0, 1) both;
+}
+
+@keyframes blink-pulse {
+  50% {
+    opacity: 0.2;
+  }
+}
+.blink {
+  animation: blink-pulse 1.4s ease-in-out infinite;
+}
+
+/* =========== Form atoms =========== */
+.field {
+  background: var(--paper);
+  border: 1px solid var(--line);
+  padding: 14px 16px;
+  font-family: inherit;
+  font-size: 15px;
+  width: 100%;
+  outline: none;
+  transition: border-color 0.12s;
+}
+.field:focus {
+  border-color: var(--ink);
+}
+.field-lg {
+  padding: 20px 22px;
+  font-size: 15px;
+  line-height: 1.6;
+  resize: vertical;
 }

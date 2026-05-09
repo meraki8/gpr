@@ -34,25 +34,47 @@ export function ResendInviteButton({ inviteId }: { inviteId: string }) {
   }
 
   return (
-    <div className="flex items-center gap-2 shrink-0">
+    <div
+      className="inline-flex items-center gap-3 shrink-0"
+      style={{ fontSize: 12 }}
+    >
       {status === "success" && cooldown > 0 && (
-        <span className="text-xs font-mono text-emerald-300">
+        <span style={{ color: "#1c8c4d", fontWeight: 500 }}>
           Invite resent
         </span>
       )}
       {status === "error" && (
-        <span className="text-xs font-mono text-[#DC2626]">Failed</span>
+        <span style={{ color: "var(--red)" }}>Failed</span>
       )}
       <button
         type="button"
         onClick={onClick}
         disabled={disabled}
         aria-label="Resend invite"
-        className={`text-xs font-mono px-2 py-1 ${
-          disabled
-            ? "text-white/30 cursor-not-allowed"
-            : "text-white/70 hover:text-white hover:bg-white/10"
-        }`}
+        style={{
+          fontFamily: "inherit",
+          fontSize: 12,
+          padding: 0,
+          background: "none",
+          border: 0,
+          cursor: disabled ? "not-allowed" : "pointer",
+          color: disabled ? "var(--mute-2)" : "var(--ink)",
+          borderBottom: disabled
+            ? "1px solid transparent"
+            : "1px solid var(--ink)",
+          paddingBottom: 1,
+          transition: "color 0.12s, border-color 0.12s",
+        }}
+        onMouseEnter={(e) => {
+          if (disabled) return;
+          e.currentTarget.style.color = "var(--red)";
+          e.currentTarget.style.borderBottomColor = "var(--red)";
+        }}
+        onMouseLeave={(e) => {
+          if (disabled) return;
+          e.currentTarget.style.color = "var(--ink)";
+          e.currentTarget.style.borderBottomColor = "var(--ink)";
+        }}
       >
         {isPending
           ? "Sending…"

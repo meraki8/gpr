@@ -1,7 +1,8 @@
-import Link from "next/link";
 import { notFound } from "next/navigation";
-import { AppHeader } from "@/components/app-header";
-import { getProjectSources } from "@/lib/data";
+import { AppShell } from "@/components/app-shell";
+import { PageHead } from "@/components/page-head";
+import { requireDbUser } from "@/lib/auth";
+import { getMyGroups, getProjectSources } from "@/lib/data";
 import {
   addGithubRepo,
   removeGithubRepo,
@@ -15,7 +16,12 @@ export default async function SourcesPage({
   params: Promise<{ projectId: string }>;
 }) {
   const { projectId } = await params;
-  const { project, isOwner } = await getProjectSources(projectId);
+  const [user, allGroups, sources] = await Promise.all([
+    requireDbUser(),
+    getMyGroups(),
+    getProjectSources(projectId),
+  ]);
+  const { project, isOwner } = sources;
 
   if (!isOwner) notFound();
 
@@ -26,76 +32,110 @@ export default async function SourcesPage({
     (githubSource?.configJson as { repos?: string[] } | null)?.repos ?? [];
 
   return (
-    <main className="flex flex-1 flex-col">
-      <AppHeader />
-      <section className="flex-1 px-8 py-12 max-w-5xl mx-auto w-full">
-        <Link
-          href={`/projects/${projectId}`}
-          className="font-mono text-xs tracking-[0.3em] uppercase text-white/40 hover:text-white/60 mb-4 inline-block"
-        >
-          ← {project.name}
-        </Link>
-        <p className="font-mono text-xs tracking-[0.3em] text-[#DC2626] uppercase mb-2">
-          Sources
-        </p>
-        <h1 className="text-3xl font-bold mb-1">Contribution sources</h1>
-        <p className="text-white/60 mb-12">
-          Hook up GitHub so commits and PRs feed into the project. Owner only.
-        </p>
+    <AppShell
+      user={user}
+      groups={allGroups}
+      currentProject={{
+        id: project.id,
+        name: project.name,
+        group: { id: project.group.id, name: project.group.name },
+      }}
+    >
+      <main className="wrap-w" style={{ paddingBottom: 160 }}>
+        <PageHead
+          eyebrow={`Sources · ${project.name}`}
+          title="Contribution sources."
+          sub="Hook GitHub up so commits and PRs feed into the ref's evidence pile. Owner only."
+        />
 
-        <div className="border border-white/10 bg-white/5 px-6 py-6 mb-8">
-          <div className="flex items-center justify-between mb-6 gap-3 flex-wrap">
-            <h2 className="text-xl font-bold">GitHub</h2>
+        {/* GitHub */}
+        <section
+          style={{
+            paddingBottom: 80,
+            borderBottom: "1px solid var(--line)",
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              alignItems: "baseline",
+              justifyContent: "space-between",
+              marginBottom: 32,
+              gap: 14,
+              flexWrap: "wrap",
+            }}
+          >
+            <h2 className="h-m" style={{ margin: 0 }}>
+              GitHub
+            </h2>
             {githubSource && githubRepos.length > 0 && (
               <form action={syncGithubSource}>
                 <input type="hidden" name="projectId" value={projectId} />
-                <button
-                  type="submit"
-                  className="bg-[#DC2626] text-white px-5 py-2 font-medium hover:bg-[#B91C1C] transition"
-                >
-                  Sync now
+                <button type="submit" className="pill pill-red">
+                  Sync now →
                 </button>
               </form>
             )}
           </div>
           {githubSource?.lastSyncedAt && (
-            <p className="text-xs font-mono text-white/40 mb-6 -mt-4">
-              Last synced {githubSource.lastSyncedAt.toLocaleString()}
+            <p className="mute-ink" style={{ fontSize: 13, marginTop: -16, marginBottom: 32 }}>
+              Last synced{" "}
+              {githubSource.lastSyncedAt.toLocaleString(undefined, {
+                month: "short",
+                day: "numeric",
+                hour: "2-digit",
+                minute: "2-digit",
+              })}
             </p>
           )}
 
-          <h3 className="text-sm font-mono uppercase tracking-widest text-white/60 mb-3">
+          <div className="label" style={{ marginBottom: 14 }}>
             Repos
-          </h3>
+          </div>
           {githubRepos.length === 0 ? (
-            <p className="text-white/50 italic mb-4">
+            <p
+              className="body mute-ink"
+              style={{ margin: 0, marginBottom: 24 }}
+            >
               No repos connected yet.
             </p>
           ) : (
-            <ul className="grid gap-2 mb-4">
+            <ul
+              style={{
+                listStyle: "none",
+                padding: 0,
+                margin: "0 0 24px 0",
+                display: "grid",
+                gap: 0,
+              }}
+            >
               {githubRepos.map((r) => (
                 <li
                   key={r}
-                  className="flex items-center justify-between border border-white/10 px-4 py-2 font-mono text-sm"
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    padding: "12px 0",
+                    borderBottom: "1px solid var(--line-2)",
+                  }}
                 >
                   <a
                     href={`https://github.com/${r}`}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="hover:text-white"
+                    className="num lk"
+                    style={{ fontSize: 14 }}
                   >
                     {r}
                   </a>
                   <form action={removeGithubRepo}>
-                    <input
-                      type="hidden"
-                      name="projectId"
-                      value={projectId}
-                    />
+                    <input type="hidden" name="projectId" value={projectId} />
                     <input type="hidden" name="repo" value={r} />
                     <button
                       type="submit"
-                      className="text-xs text-white/40 hover:text-[#DC2626]"
+                      className="lk-mute"
+                      style={{ fontSize: 12 }}
                     >
                       Remove
                     </button>
@@ -105,31 +145,46 @@ export default async function SourcesPage({
             </ul>
           )}
 
-          <form action={addGithubRepo} className="flex gap-2 max-w-md">
+          <form
+            action={addGithubRepo}
+            style={{ display: "flex", gap: 10, maxWidth: 480 }}
+          >
             <input type="hidden" name="projectId" value={projectId} />
             <input
               type="text"
               name="repo"
               placeholder="owner/repo"
               required
-              className="flex-1 bg-black border border-white/20 px-4 py-2 focus:border-[#DC2626] focus:outline-none font-mono text-sm"
+              className="field num"
+              style={{ flex: 1 }}
             />
-            <button
-              type="submit"
-              className="bg-white text-black px-5 py-2 font-medium"
-            >
-              Add repo
+            <button type="submit" className="pill pill-sm">
+              Add →
             </button>
           </form>
 
-          <h3 className="text-sm font-mono uppercase tracking-widest text-white/60 mt-8 mb-3">
+          <div
+            className="label"
+            style={{ marginBottom: 14, marginTop: 56 }}
+          >
             Member GitHub usernames
-          </h3>
-          <p className="text-xs text-white/40 mb-4">
-            Map each project member to their GitHub username so commits get
-            attributed correctly.
+          </div>
+          <p
+            className="body mute-ink"
+            style={{ margin: 0, marginBottom: 24, fontSize: 14 }}
+          >
+            Map each member to their GitHub login so commits get attributed
+            to the right person.
           </p>
-          <ul className="grid gap-2">
+          <ul
+            style={{
+              listStyle: "none",
+              padding: 0,
+              margin: 0,
+              display: "grid",
+              gap: 0,
+            }}
+          >
             {project.members.map((m) => {
               const identity = m.sourceIdentities.find(
                 (si) => si.sourceType === "GITHUB",
@@ -137,25 +192,28 @@ export default async function SourcesPage({
               return (
                 <li
                   key={m.id}
-                  className="flex items-center gap-3 border border-white/10 px-4 py-3 flex-wrap"
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 16,
+                    padding: "16px 0",
+                    borderBottom: "1px solid var(--line-2)",
+                    flexWrap: "wrap",
+                  }}
                 >
-                  <div className="flex-1 min-w-[180px]">
-                    <div className="font-medium text-sm">
+                  <div style={{ flex: 1, minWidth: 200 }}>
+                    <div style={{ fontSize: 15, fontWeight: 500 }}>
                       {m.user.name ?? m.user.email}
                     </div>
-                    <div className="text-xs font-mono text-white/40 truncate">
+                    <div className="mute-ink" style={{ fontSize: 13 }}>
                       {m.user.email}
                     </div>
                   </div>
                   <form
                     action={setGithubUsername}
-                    className="flex gap-2 items-center"
+                    style={{ display: "flex", gap: 8, alignItems: "center" }}
                   >
-                    <input
-                      type="hidden"
-                      name="projectId"
-                      value={projectId}
-                    />
+                    <input type="hidden" name="projectId" value={projectId} />
                     <input
                       type="hidden"
                       name="projectMemberId"
@@ -164,14 +222,15 @@ export default async function SourcesPage({
                     <input
                       type="text"
                       name="externalId"
-                      placeholder="github-username"
+                      placeholder="github-login"
                       defaultValue={identity?.externalId ?? ""}
                       required
-                      className="bg-black border border-white/20 px-3 py-1.5 focus:border-[#DC2626] focus:outline-none font-mono text-sm w-44"
+                      className="field num"
+                      style={{ width: 200, padding: "8px 12px" }}
                     />
                     <button
                       type="submit"
-                      className="bg-white/10 hover:bg-white/20 text-white/80 px-3 py-1.5 text-sm font-medium"
+                      className="pill pill-ghost pill-sm"
                     >
                       Save
                     </button>
@@ -180,56 +239,88 @@ export default async function SourcesPage({
               );
             })}
           </ul>
-        </div>
+        </section>
 
-        <div className="border border-dashed border-white/10 px-6 py-6">
-          <h2 className="text-sm font-mono uppercase tracking-widest text-white/60 mb-3">
+        {/* Recent activity */}
+        <section style={{ padding: "80px 0 0" }}>
+          <div className="label" style={{ marginBottom: 32 }}>
             Recent activity
-          </h2>
+          </div>
           {project.contributionEvents.length === 0 ? (
-            <p className="text-white/50 italic">
-              No contribution events yet. Add a repo and click Sync.
+            <p className="body mute-ink" style={{ margin: 0 }}>
+              No contribution events yet. Add a repo and Sync.
             </p>
           ) : (
-            <ul className="grid gap-1 font-mono text-sm">
-              {project.contributionEvents.map((e) => {
-                const payload = e.payloadJson as {
-                  login?: string;
-                  message?: string;
-                  title?: string;
-                  url?: string;
-                  repo?: string;
-                  number?: number;
-                };
-                return (
-                  <li
-                    key={e.id}
-                    className="flex items-baseline gap-3 text-white/70"
+            project.contributionEvents.map((e, i) => {
+              const payload = e.payloadJson as {
+                login?: string;
+                message?: string;
+                title?: string;
+                url?: string;
+                repo?: string;
+              };
+              return (
+                <div
+                  key={e.id}
+                  className="fade-up"
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "100px 100px 160px 1fr",
+                    gap: 32,
+                    padding: "16px 0",
+                    borderBottom: "1px solid var(--line-2)",
+                    alignItems: "baseline",
+                    animationDelay: `${i * 24}ms`,
+                  }}
+                >
+                  <span
+                    className="mute-ink num"
+                    style={{ fontSize: 12 }}
                   >
-                    <span className="text-white/30 text-xs w-20 shrink-0">
-                      {e.occurredAt.toLocaleDateString()}
-                    </span>
-                    <span className="text-[#DC2626] uppercase text-xs w-24 shrink-0">
-                      {e.eventType}
-                    </span>
-                    <span className="text-white/50 shrink-0">
-                      @{payload.login ?? "unknown"}
-                    </span>
-                    <a
-                      href={payload.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="truncate text-white/80 hover:text-white"
-                    >
-                      {payload.title ?? payload.message ?? "—"}
-                    </a>
-                  </li>
-                );
-              })}
-            </ul>
+                    {e.occurredAt.toLocaleDateString(undefined, {
+                      month: "short",
+                      day: "numeric",
+                    })}
+                  </span>
+                  <span
+                    className="label"
+                    style={{ color: "var(--red)" }}
+                  >
+                    {e.eventType}
+                  </span>
+                  <span
+                    className="num"
+                    style={{
+                      fontSize: 14,
+                      fontWeight: 500,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    @{payload.login ?? "unknown"}
+                  </span>
+                  <a
+                    href={payload.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="lk-mute"
+                    style={{
+                      fontSize: 14,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                      display: "block",
+                    }}
+                  >
+                    {payload.title ?? payload.message ?? "—"}
+                  </a>
+                </div>
+              );
+            })
           )}
-        </div>
-      </section>
-    </main>
+        </section>
+      </main>
+    </AppShell>
   );
 }

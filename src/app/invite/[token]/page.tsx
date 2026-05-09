@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { auth } from "@clerk/nextjs/server";
+import { Wordmark } from "@/components/wordmark";
 import { db } from "@/lib/db";
 import { acceptInvite } from "./actions";
 
@@ -21,15 +22,15 @@ export default async function InvitePage({
   if (!invite || invite.project.deletedAt) {
     return (
       <ErrorScreen
-        title="Invite not found"
-        message="This invite link is invalid or the project has been removed."
+        title="Invite not found."
+        message="This link is invalid or the project was removed."
       />
     );
   }
   if (invite.acceptedAt) {
     return (
       <ErrorScreen
-        title="Already accepted"
+        title="Already accepted."
         message="This invite has already been used."
         link={`/projects/${invite.projectId}`}
         linkLabel="Open project"
@@ -39,8 +40,8 @@ export default async function InvitePage({
   if (invite.expiresAt < new Date()) {
     return (
       <ErrorScreen
-        title="Invite expired"
-        message="This invite has expired. Ask the project owner to send a new one."
+        title="Invite expired."
+        message="Ask the project owner to resend it."
       />
     );
   }
@@ -50,42 +51,119 @@ export default async function InvitePage({
   const inviterName = invite.inviter.name ?? invite.inviter.email;
 
   return (
-    <main className="flex flex-1 items-center justify-center px-8 py-20">
-      <div className="max-w-xl text-center w-full">
-        <p className="font-mono text-xs tracking-[0.3em] text-[#DC2626] uppercase mb-4">
+    <main className="flex flex-1 flex-col">
+      <header
+        className="flex items-center justify-between"
+        style={{ padding: "28px 40px" }}
+      >
+        <Link href="/">
+          <Wordmark />
+        </Link>
+        <span className="mute-ink" style={{ fontSize: 13 }}>
+          Invite
+        </span>
+      </header>
+
+      <section
+        className="wrap"
+        style={{
+          flex: 1,
+          paddingTop: 80,
+          paddingBottom: 120,
+        }}
+      >
+        <div className="label fade-up" style={{ marginBottom: 32 }}>
           You&rsquo;ve been invited
+        </div>
+        <h1
+          className="display fade-up"
+          style={{
+            fontSize: "clamp(56px, 9vw, 124px)",
+            margin: 0,
+            fontWeight: 500,
+            lineHeight: 0.94,
+          }}
+        >
+          {invite.project.name}.
+        </h1>
+        <div
+          className="fade-up"
+          style={{ marginTop: 18, animationDelay: "60ms" }}
+        >
+          <span className="mute-ink" style={{ fontSize: 14 }}>
+            in {invite.project.group.name}
+          </span>
+        </div>
+
+        <p
+          className="body-lg fade-up"
+          style={{
+            maxWidth: 640,
+            marginTop: 56,
+            animationDelay: "100ms",
+          }}
+        >
+          <strong>{inviterName}</strong> invited you to join this project as
+          a member.
         </p>
-        <h1 className="text-4xl font-bold mb-2">{invite.project.name}</h1>
-        <p className="text-xs font-mono uppercase tracking-widest text-white/40 mb-6">
-          in {invite.project.group.name}
-        </p>
-        <p className="text-white/70 mb-2">
-          <strong>{inviterName}</strong> invited you to join this project as a
-          member.
-        </p>
-        <div className="border border-white/10 bg-white/5 px-5 py-4 my-8 text-left whitespace-pre-line text-white/80 text-sm">
+
+        <div
+          className="fade-up"
+          style={{
+            marginTop: 32,
+            padding: 24,
+            borderLeft: "3px solid var(--red)",
+            background: "var(--paper)",
+            maxWidth: 720,
+            whiteSpace: "pre-line",
+            color: "var(--ink-2)",
+            fontSize: 15,
+            lineHeight: 1.55,
+            animationDelay: "120ms",
+          }}
+        >
           {invite.project.brief}
         </div>
 
-        {isSignedIn ? (
-          <form action={acceptInvite}>
-            <input type="hidden" name="token" value={token} />
-            <button
-              type="submit"
-              className="bg-[#DC2626] text-white px-8 py-3 font-medium hover:bg-[#B91C1C] transition"
+        <div
+          className="fade-up"
+          style={{
+            marginTop: 56,
+            display: "flex",
+            gap: 14,
+            alignItems: "center",
+            animationDelay: "160ms",
+          }}
+        >
+          {isSignedIn ? (
+            <form action={acceptInvite}>
+              <input type="hidden" name="token" value={token} />
+              <button
+                type="submit"
+                className="pill pill-red"
+                style={{ padding: "14px 28px", fontSize: 15 }}
+              >
+                Accept invite →
+              </button>
+            </form>
+          ) : (
+            <Link
+              href={`/sign-in?redirect_url=/invite/${token}`}
+              className="pill pill-red"
+              style={{
+                padding: "14px 28px",
+                fontSize: 15,
+                textDecoration: "none",
+              }}
             >
-              Accept invite
-            </button>
-          </form>
-        ) : (
-          <Link
-            href={`/sign-in?redirect_url=/invite/${token}`}
-            className="inline-block bg-[#DC2626] text-white px-8 py-3 font-medium hover:bg-[#B91C1C] transition"
-          >
-            Sign in to accept
-          </Link>
-        )}
-      </div>
+              Sign in to accept →
+            </Link>
+          )}
+          <span className="mute-ink" style={{ fontSize: 13 }}>
+            By accepting you join this project as a member.
+          </span>
+        </div>
+      </section>
     </main>
   );
 }
@@ -102,29 +180,53 @@ function ErrorScreen({
   linkLabel?: string;
 }) {
   return (
-    <main className="flex flex-1 items-center justify-center px-8 py-20">
-      <div className="max-w-md text-center">
-        <p className="font-mono text-xs tracking-[0.3em] text-white/40 uppercase mb-4">
+    <main className="flex flex-1 flex-col">
+      <header
+        className="flex items-center justify-between"
+        style={{ padding: "28px 40px" }}
+      >
+        <Link href="/">
+          <Wordmark />
+        </Link>
+      </header>
+      <section
+        className="wrap"
+        style={{
+          flex: 1,
+          paddingTop: 120,
+          paddingBottom: 120,
+        }}
+      >
+        <div className="label" style={{ marginBottom: 24 }}>
           Invite
+        </div>
+        <h1
+          className="display"
+          style={{
+            fontSize: "clamp(48px, 7vw, 96px)",
+            margin: 0,
+            fontWeight: 500,
+            lineHeight: 0.94,
+          }}
+        >
+          {title}
+        </h1>
+        <p
+          className="body-lg"
+          style={{ marginTop: 24, maxWidth: 540 }}
+        >
+          {message}
         </p>
-        <h1 className="text-3xl font-bold mb-3">{title}</h1>
-        <p className="text-white/60 mb-8">{message}</p>
-        {link ? (
+        <div style={{ marginTop: 32 }}>
           <Link
-            href={link}
-            className="inline-block bg-white text-black px-6 py-2 font-medium"
+            href={link ?? "/"}
+            className="pill"
+            style={{ textDecoration: "none" }}
           >
-            {linkLabel ?? "Continue"}
+            {linkLabel ?? "Back to home"}
           </Link>
-        ) : (
-          <Link
-            href="/"
-            className="inline-block bg-white text-black px-6 py-2 font-medium"
-          >
-            Back to home
-          </Link>
-        )}
-      </div>
+        </div>
+      </section>
     </main>
   );
 }

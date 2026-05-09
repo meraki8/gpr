@@ -18,6 +18,27 @@ export async function getMyGroups() {
   });
 }
 
+export async function getMyProjects() {
+  const user = await requireDbUser();
+  return db.project.findMany({
+    where: {
+      deletedAt: null,
+      members: { some: { userId: user.id } },
+    },
+    include: {
+      group: true,
+      _count: {
+        select: {
+          members: true,
+          cards: { where: { status: "APPROVED" } },
+          matchReports: { where: { status: "PUBLISHED" } },
+        },
+      },
+    },
+    orderBy: [{ updatedAt: "desc" }],
+  });
+}
+
 export async function getGroup(groupId: string) {
   const user = await requireDbUser();
   const group = await db.group.findFirst({
@@ -97,6 +118,7 @@ export async function getProjectSources(projectId: string) {
   const project = await db.project.findFirst({
     where: { id: projectId, deletedAt: null },
     include: {
+      group: true,
       members: {
         include: {
           user: true,

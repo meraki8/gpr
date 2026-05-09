@@ -1,76 +1,205 @@
 import Link from "next/link";
-import { AppHeader } from "@/components/app-header";
+import { AppShell } from "@/components/app-shell";
+import { PageHead } from "@/components/page-head";
+import { Status } from "@/components/status";
 import { requireDbUser } from "@/lib/auth";
-import { getMyGroups } from "@/lib/data";
+import { getMyGroups, getMyProjects } from "@/lib/data";
 import { createGroup } from "./actions";
 
+function statusFromHealth(score: number): "good" | "watch" | "risk" {
+  if (score >= 80) return "good";
+  if (score >= 60) return "watch";
+  return "risk";
+}
+
+function colorForHealth(score: number): string {
+  if (score >= 80) return "var(--ink)";
+  if (score >= 60) return "#c89014";
+  return "var(--red)";
+}
+
 export default async function DashboardPage() {
-  const user = await requireDbUser();
-  const groups = await getMyGroups();
+  const [user, groups, projects] = await Promise.all([
+    requireDbUser(),
+    getMyGroups(),
+    getMyProjects(),
+  ]);
 
   return (
-    <main className="flex flex-1 flex-col">
-      <AppHeader />
-      <section className="flex-1 px-8 py-12 max-w-5xl mx-auto w-full">
-        <p className="font-mono text-xs tracking-[0.3em] text-[#DC2626] uppercase mb-2">
-          Dashboard
-        </p>
-        <h1 className="text-3xl font-bold mb-1">
-          Welcome{user.name ? `, ${user.name.split(" ")[0]}` : ""}.
-        </h1>
-        <p className="text-white/60 mb-10">
-          Your groups and the projects you&apos;re refereeing.
-        </p>
+    <AppShell user={user} groups={groups}>
+      <main className="wrap-w" style={{ paddingBottom: 120 }}>
+        <PageHead
+          eyebrow={
+            projects.length > 0
+              ? `Projects · ${projects.length} active`
+              : "Welcome"
+          }
+          title={`Hey, ${user.name?.split(" ")[0] ?? "there"}.`}
+          sub="Health, cards, and what the ref last saw."
+        />
 
-        <h2 className="text-sm font-mono uppercase tracking-widest text-white/60 mb-4">
-          Your groups
-        </h2>
-        {groups.length === 0 ? (
-          <p className="text-white/50 mb-12 italic">
-            No groups yet. Create one below to start.
-          </p>
+        {projects.length === 0 ? (
+          <EmptyState groups={groups} />
         ) : (
-          <ul className="grid gap-3 mb-12">
-            {groups.map((g) => (
-              <li key={g.id}>
+          <>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns:
+                  "1fr 90px 90px 130px 110px 28px",
+                gap: 24,
+                padding: "16px 0",
+                color: "var(--mute)",
+                fontSize: 12,
+                letterSpacing: "0.04em",
+                textTransform: "uppercase",
+                borderBottom: "1px solid var(--line)",
+              }}
+            >
+              <span>Project</span>
+              <span style={{ textAlign: "right" }}>Health</span>
+              <span style={{ textAlign: "right" }}>Cards</span>
+              <span>Status</span>
+              <span style={{ textAlign: "right" }}>Deadline</span>
+              <span />
+            </div>
+            {projects.map((p, i) => {
+              const cardsCount = p._count.cards;
+              const reports = p._count.matchReports;
+              return (
                 <Link
-                  href={`/groups/${g.id}`}
-                  className="block border border-white/10 bg-white/5 hover:bg-white/10 px-5 py-4 transition"
+                  key={p.id}
+                  href={`/projects/${p.id}`}
+                  className="row-hover fade-up"
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns:
+                      "1fr 90px 90px 130px 110px 28px",
+                    gap: 24,
+                    padding: "28px 0",
+                    borderBottom: "1px solid var(--line)",
+                    alignItems: "center",
+                    animationDelay: `${i * 50}ms`,
+                  }}
                 >
-                  <div className="font-medium mb-1">{g.name}</div>
-                  <div className="text-xs text-white/50 font-mono">
-                    {g._count.members} member
-                    {g._count.members === 1 ? "" : "s"} · {g._count.projects}{" "}
-                    project{g._count.projects === 1 ? "" : "s"}
+                  <div>
+                    <div className="h-s">{p.name}</div>
+                    <div
+                      className="mute-ink"
+                      style={{ fontSize: 13, marginTop: 2 }}
+                    >
+                      {p.group.name} ·{" "}
+                      {reports > 0
+                        ? `${reports} report${reports === 1 ? "" : "s"} published`
+                        : "No reports yet"}
+                    </div>
                   </div>
+                  <div style={{ textAlign: "right" }}>
+                    <span
+                      className="num display"
+                      style={{
+                        fontSize: 30,
+                        color: colorForHealth(p.healthScore),
+                      }}
+                    >
+                      {p.healthScore}
+                    </span>
+                  </div>
+                  <div
+                    className="num"
+                    style={{
+                      textAlign: "right",
+                      fontSize: 18,
+                      color:
+                        cardsCount > 0
+                          ? "var(--red)"
+                          : "var(--mute-2)",
+                    }}
+                  >
+                    {cardsCount || "—"}
+                  </div>
+                  <Status kind={statusFromHealth(p.healthScore)} />
+                  <div
+                    className="mute-ink num"
+                    style={{ textAlign: "right", fontSize: 13 }}
+                  >
+                    {p.deadline
+                      ? p.deadline.toLocaleDateString(undefined, {
+                          month: "short",
+                          day: "numeric",
+                        })
+                      : "—"}
+                  </div>
+                  <span
+                    className="mute-ink"
+                    style={{ fontSize: 16, textAlign: "right" }}
+                  >
+                    →
+                  </span>
                 </Link>
-              </li>
-            ))}
-          </ul>
+              );
+            })}
+          </>
         )}
 
-        <div className="border-t border-white/10 pt-8">
-          <h2 className="text-sm font-mono uppercase tracking-widest text-white/60 mb-4">
-            Create a group
-          </h2>
-          <form action={createGroup} className="flex gap-2 max-w-md">
+        <section style={{ marginTop: 80, maxWidth: 480 }}>
+          <div className="label" style={{ marginBottom: 18 }}>
+            New group
+          </div>
+          <form action={createGroup} style={{ display: "flex", gap: 10 }}>
             <input
               type="text"
               name="name"
               placeholder="e.g. Capstone Squad"
               required
               maxLength={100}
-              className="flex-1 bg-black border border-white/20 px-4 py-2 focus:border-[#DC2626] focus:outline-none"
+              className="field"
+              style={{ flex: 1 }}
             />
-            <button
-              type="submit"
-              className="bg-[#DC2626] text-white px-5 py-2 font-medium hover:bg-[#B91C1C] transition"
-            >
-              Create
+            <button type="submit" className="pill pill-sm">
+              Create →
             </button>
           </form>
+          <p
+            className="mute-ink"
+            style={{ fontSize: 13, marginTop: 10 }}
+          >
+            Groups hold one or more projects. You become the owner.
+          </p>
+        </section>
+      </main>
+    </AppShell>
+  );
+}
+
+function EmptyState({
+  groups,
+}: {
+  groups: { id: string; name: string }[];
+}) {
+  return (
+    <div
+      className="fade-up"
+      style={{ padding: "40px 0 80px", maxWidth: 540 }}
+    >
+      <p className="body-lg" style={{ marginTop: 0 }}>
+        No projects yet. {groups.length > 0
+          ? `Open one of your groups to add a project.`
+          : `Create a group below, then add a project under it.`}
+      </p>
+      {groups.length > 0 && (
+        <div style={{ marginTop: 24, display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {groups.slice(0, 3).map((g) => (
+            <Link
+              key={g.id}
+              href={`/groups/${g.id}`}
+              className="pill pill-ghost pill-sm"
+            >
+              {g.name} →
+            </Link>
+          ))}
         </div>
-      </section>
-    </main>
+      )}
+    </div>
   );
 }
