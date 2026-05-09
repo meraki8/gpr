@@ -1,4 +1,3 @@
-import { notFound } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
 import { PageHead } from "@/components/page-head";
 import { requireDbUser } from "@/lib/auth";
@@ -23,8 +22,6 @@ export default async function SourcesPage({
   ]);
   const { project, isOwner } = sources;
 
-  if (!isOwner) notFound();
-
   const githubSource = project.contributionSources.find(
     (s) => s.sourceType === "GITHUB",
   );
@@ -43,7 +40,7 @@ export default async function SourcesPage({
         <PageHead
           eyebrow={`Sources · ${project.name}`}
           title="Contribution sources."
-          sub="Hook GitHub up so commits and PRs feed into the ref's evidence pile. Owner only."
+          sub="Commits and PRs from connected GitHub repos feed into the ref's evidence pile."
         />
 
         {/* GitHub */}
@@ -66,7 +63,7 @@ export default async function SourcesPage({
             <h2 className="h-m" style={{ margin: 0 }}>
               GitHub
             </h2>
-            {githubSource && githubRepos.length > 0 && (
+            {isOwner && githubSource && githubRepos.length > 0 && (
               <form action={syncGithubSource}>
                 <input type="hidden" name="projectId" value={projectId} />
                 <button type="submit" className="pill pill-red">
@@ -127,39 +124,43 @@ export default async function SourcesPage({
                   >
                     {r}
                   </a>
-                  <form action={removeGithubRepo}>
-                    <input type="hidden" name="projectId" value={projectId} />
-                    <input type="hidden" name="repo" value={r} />
-                    <button
-                      type="submit"
-                      className="lk-mute"
-                      style={{ fontSize: 12 }}
-                    >
-                      Remove
-                    </button>
-                  </form>
+                  {isOwner && (
+                    <form action={removeGithubRepo}>
+                      <input type="hidden" name="projectId" value={projectId} />
+                      <input type="hidden" name="repo" value={r} />
+                      <button
+                        type="submit"
+                        className="lk-mute"
+                        style={{ fontSize: 12 }}
+                      >
+                        Remove
+                      </button>
+                    </form>
+                  )}
                 </li>
               ))}
             </ul>
           )}
 
-          <form
-            action={addGithubRepo}
-            style={{ display: "flex", gap: 10, maxWidth: 480 }}
-          >
-            <input type="hidden" name="projectId" value={projectId} />
-            <input
-              type="text"
-              name="repo"
-              placeholder="owner/repo"
-              required
-              className="field num"
-              style={{ flex: 1 }}
-            />
-            <button type="submit" className="pill pill-sm">
-              Add →
-            </button>
-          </form>
+          {isOwner && (
+            <form
+              action={addGithubRepo}
+              style={{ display: "flex", gap: 10, maxWidth: 480 }}
+            >
+              <input type="hidden" name="projectId" value={projectId} />
+              <input
+                type="text"
+                name="repo"
+                placeholder="owner/repo"
+                required
+                className="field num"
+                style={{ flex: 1 }}
+              />
+              <button type="submit" className="pill pill-sm">
+                Add →
+              </button>
+            </form>
+          )}
 
           <div
             className="label"
@@ -207,32 +208,41 @@ export default async function SourcesPage({
                       {m.user.email}
                     </div>
                   </div>
-                  <form
-                    action={setGithubUsername}
-                    style={{ display: "flex", gap: 8, alignItems: "center" }}
-                  >
-                    <input type="hidden" name="projectId" value={projectId} />
-                    <input
-                      type="hidden"
-                      name="projectMemberId"
-                      value={m.id}
-                    />
-                    <input
-                      type="text"
-                      name="externalId"
-                      placeholder="github-login"
-                      defaultValue={identity?.externalId ?? ""}
-                      required
-                      className="field num"
-                      style={{ width: 200, padding: "8px 12px" }}
-                    />
-                    <button
-                      type="submit"
-                      className="pill pill-ghost pill-sm"
+                  {isOwner ? (
+                    <form
+                      action={setGithubUsername}
+                      style={{ display: "flex", gap: 8, alignItems: "center" }}
                     >
-                      Save
-                    </button>
-                  </form>
+                      <input type="hidden" name="projectId" value={projectId} />
+                      <input
+                        type="hidden"
+                        name="projectMemberId"
+                        value={m.id}
+                      />
+                      <input
+                        type="text"
+                        name="externalId"
+                        placeholder="github-login"
+                        defaultValue={identity?.externalId ?? ""}
+                        required
+                        className="field num"
+                        style={{ width: 200, padding: "8px 12px" }}
+                      />
+                      <button
+                        type="submit"
+                        className="pill pill-ghost pill-sm"
+                      >
+                        Save
+                      </button>
+                    </form>
+                  ) : (
+                    <span
+                      className="num mute-ink"
+                      style={{ fontSize: 14 }}
+                    >
+                      {identity?.externalId ?? "—"}
+                    </span>
+                  )}
                 </li>
               );
             })}
