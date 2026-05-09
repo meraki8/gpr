@@ -411,7 +411,6 @@ export async function analyzeTranscript(formData: FormData) {
           cardType: c.card_type,
           reason: c.reason,
           evidenceJson: { quotes: c.evidence_quotes },
-          aiGenerated: true,
         })),
       },
     },

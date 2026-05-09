@@ -13,6 +13,9 @@ CREATE TABLE "KnowledgeEntry" (
 );
 
 -- CreateIndex
+CREATE UNIQUE INDEX "KnowledgeEntry_projectId_source_sourceRefId_key" ON "KnowledgeEntry"("projectId", "source", "sourceRefId");
+
+-- CreateIndex
 CREATE INDEX "KnowledgeEntry_projectId_createdAt_idx" ON "KnowledgeEntry"("projectId", "createdAt");
 
 -- CreateIndex

@@ -1,5 +1,6 @@
 "use server";
 
+import { randomBytes } from "crypto";
 import { z } from "zod";
 import { revalidatePath } from "next/cache";
 import { requireDbUser } from "@/lib/auth";
@@ -310,4 +311,102 @@ export async function syncGithubSource(formData: FormData) {
   revalidatePath(`/projects/${projectId}/kb`);
   revalidatePath(`/projects/${projectId}/leaderboard`);
   revalidatePath(`/projects/${projectId}/members`);
+}
+
+// =================== JIRA ===================
+
+const JiraConnectSchema = z.object({
+  projectId: z.string().min(1),
+  jiraProjectKey: z.string().trim().min(1, "Jira project key required"),
+  jiraBoardUrl: z.string().trim().url("Enter a valid Jira board URL"),
+});
+
+export async function connectJira(formData: FormData) {
+  const user = await requireDbUser();
+  const parsed = JiraConnectSchema.safeParse({
+    projectId: formData.get("projectId"),
+    jiraProjectKey: formData.get("jiraProjectKey"),
+    jiraBoardUrl: formData.get("jiraBoardUrl"),
+  });
+  if (!parsed.success) {
+    throw new Error(parsed.error.issues[0]?.message ?? "Invalid input");
+  }
+
+  const { projectId, jiraProjectKey, jiraBoardUrl } = parsed.data;
+  await requireOwner(projectId, user.id);
+
+  const existing = await db.contributionSource.findUnique({
+    where: { projectId_sourceType: { projectId, sourceType: "JIRA" } },
+  });
+
+  const webhookSecret = existing
+    ? (existing.configJson as { webhookSecret?: string }).webhookSecret ??
+      randomBytes(24).toString("hex")
+    : randomBytes(24).toString("hex");
+
+  const config = { projectKey: jiraProjectKey, boardUrl: jiraBoardUrl, webhookSecret };
+
+  if (existing) {
+    await db.contributionSource.update({
+      where: { id: existing.id },
+      data: { configJson: config, enabled: true },
+    });
+  } else {
+    await db.contributionSource.create({
+      data: { projectId, sourceType: "JIRA", configJson: config, enabled: true },
+    });
+  }
+
+  revalidatePath(`/projects/${projectId}/sources`);
+}
+
+const JiraDisconnectSchema = z.object({ projectId: z.string().min(1) });
+
+export async function disconnectJira(formData: FormData) {
+  const user = await requireDbUser();
+  const parsed = JiraDisconnectSchema.safeParse({ projectId: formData.get("projectId") });
+  if (!parsed.success) throw new Error("Invalid input");
+
+  const { projectId } = parsed.data;
+  await requireOwner(projectId, user.id);
+
+  await db.contributionSource.deleteMany({
+    where: { projectId, sourceType: "JIRA" },
+  });
+
+  revalidatePath(`/projects/${projectId}/sources`);
+}
+
+const JiraIdentitySchema = z.object({
+  projectId: z.string().min(1),
+  projectMemberId: z.string().min(1),
+  externalId: z.string().trim().min(1, "Jira account ID required"),
+});
+
+export async function setJiraAccountId(formData: FormData) {
+  const user = await requireDbUser();
+  const parsed = JiraIdentitySchema.safeParse({
+    projectId: formData.get("projectId"),
+    projectMemberId: formData.get("projectMemberId"),
+    externalId: formData.get("externalId"),
+  });
+  if (!parsed.success) {
+    throw new Error(parsed.error.issues[0]?.message ?? "Invalid input");
+  }
+
+  const { projectId, projectMemberId, externalId } = parsed.data;
+  await requireOwner(projectId, user.id);
+
+  const member = await db.projectMember.findFirst({
+    where: { id: projectMemberId, projectId },
+  });
+  if (!member) throw new Error("FORBIDDEN");
+
+  await db.sourceIdentity.upsert({
+    where: { projectMemberId_sourceType: { projectMemberId, sourceType: "JIRA" } },
+    create: { projectId, projectMemberId, sourceType: "JIRA", externalId, verified: false },
+    update: { externalId, verified: false },
+  });
+
+  revalidatePath(`/projects/${projectId}/sources`);
 }
