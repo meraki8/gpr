@@ -15,6 +15,14 @@ async function requireOwner(projectId: string, userId: string) {
   if (!member) throw new Error("FORBIDDEN");
 }
 
+type GithubConfig = {
+  repos?: string[];
+  accessToken?: string;
+  token?: string;
+  lastSyncError?: string | null;
+  lastSyncOkAt?: string | null;
+};
+
 const RepoSchema = z.object({
   projectId: z.string().min(1),
   repo: z
@@ -43,14 +51,14 @@ export async function addGithubRepo(formData: FormData) {
     where: { projectId_sourceType: { projectId, sourceType: "GITHUB" } },
   });
 
-  const existingRepos: string[] =
-    (existing?.configJson as { repos?: string[] } | null)?.repos ?? [];
+  const existingConfig = (existing?.configJson as GithubConfig | null) ?? {};
+  const existingRepos = existingConfig.repos ?? [];
 
   if (existingRepos.includes(repo)) {
     throw new Error("That repo is already connected");
   }
 
-  const newConfig = { repos: [...existingRepos, repo] };
+  const newConfig = { ...existingConfig, repos: [...existingRepos, repo] };
 
   if (existing) {
     await db.contributionSource.update({
@@ -92,14 +100,61 @@ export async function removeGithubRepo(formData: FormData) {
   });
   if (!source) return;
 
-  const existingRepos: string[] =
-    (source.configJson as { repos?: string[] } | null)?.repos ?? [];
+  const existingConfig = (source.configJson as GithubConfig | null) ?? {};
+  const existingRepos = existingConfig.repos ?? [];
   const newRepos = existingRepos.filter((r) => r !== repo);
 
   await db.contributionSource.update({
     where: { id: source.id },
-    data: { configJson: { repos: newRepos } },
+    data: { configJson: { ...existingConfig, repos: newRepos } },
   });
+
+  revalidatePath(`/projects/${projectId}/sources`);
+}
+
+const GithubTokenSchema = z.object({
+  projectId: z.string().min(1),
+  githubAccessToken: z.string().trim().min(1, "GitHub token required"),
+});
+
+export async function setGithubAccessToken(formData: FormData) {
+  const user = await requireDbUser();
+  const parsed = GithubTokenSchema.safeParse({
+    projectId: formData.get("projectId"),
+    githubAccessToken: formData.get("githubAccessToken"),
+  });
+  if (!parsed.success) {
+    throw new Error(parsed.error.issues[0]?.message ?? "Invalid input");
+  }
+
+  const { projectId, githubAccessToken } = parsed.data;
+  await requireOwner(projectId, user.id);
+
+  const existing = await db.contributionSource.findUnique({
+    where: { projectId_sourceType: { projectId, sourceType: "GITHUB" } },
+  });
+  const existingConfig = (existing?.configJson as GithubConfig | null) ?? {};
+  const newConfig: GithubConfig = {
+    ...existingConfig,
+    accessToken: githubAccessToken,
+  };
+  delete newConfig.token;
+
+  if (existing) {
+    await db.contributionSource.update({
+      where: { id: existing.id },
+      data: { configJson: newConfig, enabled: true },
+    });
+  } else {
+    await db.contributionSource.create({
+      data: {
+        projectId,
+        sourceType: "GITHUB",
+        configJson: { repos: [], accessToken: githubAccessToken },
+        enabled: true,
+      },
+    });
+  }
 
   revalidatePath(`/projects/${projectId}/sources`);
 }

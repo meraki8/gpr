@@ -17,6 +17,10 @@ import { recomputeMemberScores } from "./scoring";
 
 type GithubSourceConfig = {
   repos?: string[];
+  accessToken?: string;
+  token?: string;
+  lastSyncError?: string | null;
+  lastSyncOkAt?: string | null;
 };
 
 type JiraSourceConfig = {
@@ -359,6 +363,7 @@ export async function syncGithubProject(
 
   const config = source.configJson as GithubSourceConfig | null;
   const repos = config?.repos ?? [];
+  const accessToken = config?.accessToken ?? config?.token;
   summary.repos = repos.length;
   if (repos.length === 0) {
     summary.errors.push("No repos configured");
@@ -390,7 +395,15 @@ export async function syncGithubProject(
     const [owner, name] = repo.split("/");
     if (!owner || !name) continue;
 
-    const commits = await fetchCommits(owner, name, since);
+    let commits: GhCommit[] = [];
+    try {
+      commits = await fetchCommits(owner, name, since, accessToken);
+    } catch (err) {
+      summary.errors.push(
+        err instanceof Error ? err.message : `GitHub commits ${repo}: failed`,
+      );
+    }
+
     const existingCommits = await db.contributionEvent.findMany({
       where: {
         sourceId: source.id,
@@ -458,7 +471,7 @@ export async function syncGithubProject(
         : null;
       let files: GhChangedFile[] = [];
       try {
-        files = await fetchCommitFiles(owner, name, commit.sha);
+        files = await fetchCommitFiles(owner, name, commit.sha, accessToken);
       } catch (err) {
         summary.errors.push(
           `Commit code lookup ${repo}@${commit.sha.slice(0, 7)}: ${err instanceof Error ? err.message : "failed"}`,
@@ -477,7 +490,15 @@ export async function syncGithubProject(
       if (failed) summary.jiraStatusFailures += 1;
     }
 
-    const prs = await fetchPullRequests(owner, name);
+    let prs: GhPullRequest[] = [];
+    try {
+      prs = await fetchPullRequests(owner, name, accessToken);
+    } catch (err) {
+      summary.errors.push(
+        err instanceof Error ? err.message : `GitHub PRs ${repo}: failed`,
+      );
+    }
+
     if (prs.length > 0) {
       const result = await db.contributionEvent.createMany({
         data: prs.map((pr) => ({
@@ -539,7 +560,12 @@ export async function syncGithubProject(
 
       let files: GhChangedFile[] = [];
       try {
-        files = await fetchPullRequestFiles(owner, name, pr.number);
+        files = await fetchPullRequestFiles(
+          owner,
+          name,
+          pr.number,
+          accessToken,
+        );
       } catch (err) {
         summary.errors.push(
           `PR code lookup ${repo}#${pr.number}: ${err instanceof Error ? err.message : "failed"}`,
@@ -565,7 +591,19 @@ export async function syncGithubProject(
 
   await db.contributionSource.update({
     where: { id: source.id },
-    data: { lastSyncedAt: new Date() },
+    data: {
+      lastSyncedAt: new Date(),
+      configJson: {
+        ...(config ?? {}),
+        repos,
+        lastSyncError:
+          summary.errors.length > 0
+            ? summary.errors.slice(0, 3).join(" | ").slice(0, 1200)
+            : null,
+        lastSyncOkAt:
+          summary.errors.length === 0 ? new Date().toISOString() : null,
+      },
+    },
   });
 
   try {

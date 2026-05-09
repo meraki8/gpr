@@ -49,13 +49,13 @@ const HEADERS: HeadersInit = {
   "User-Agent": "GPR/1.0",
 };
 
-function githubHeaders(): HeadersInit {
-  const token = process.env.GITHUB_TOKEN;
+function githubHeaders(accessToken?: string): HeadersInit {
+  const token = accessToken || process.env.GITHUB_TOKEN;
   return token ? { ...HEADERS, Authorization: `Bearer ${token}` } : HEADERS;
 }
 
-function githubRawHeaders(): HeadersInit {
-  const token = process.env.GITHUB_TOKEN;
+function githubRawHeaders(accessToken?: string): HeadersInit {
+  const token = accessToken || process.env.GITHUB_TOKEN;
   return token ? { "User-Agent": "GPR/1.0", Authorization: `Bearer ${token}` } : { "User-Agent": "GPR/1.0" };
 }
 
@@ -63,12 +63,13 @@ export async function fetchCommits(
   owner: string,
   repo: string,
   since?: Date,
+  accessToken?: string,
 ): Promise<GhCommit[]> {
   const url = new URL(`https://api.github.com/repos/${owner}/${repo}/commits`);
   url.searchParams.set("per_page", "100");
   if (since) url.searchParams.set("since", since.toISOString());
 
-  const res = await fetch(url, { headers: githubHeaders(), cache: "no-store" });
+  const res = await fetch(url, { headers: githubHeaders(accessToken), cache: "no-store" });
   if (!res.ok) {
     const body = await res.text();
     throw new Error(
@@ -81,6 +82,7 @@ export async function fetchCommits(
 export async function fetchPullRequests(
   owner: string,
   repo: string,
+  accessToken?: string,
 ): Promise<GhPullRequest[]> {
   const url = new URL(`https://api.github.com/repos/${owner}/${repo}/pulls`);
   url.searchParams.set("state", "all");
@@ -88,7 +90,7 @@ export async function fetchPullRequests(
   url.searchParams.set("direction", "desc");
   url.searchParams.set("per_page", "50");
 
-  const res = await fetch(url, { headers: githubHeaders(), cache: "no-store" });
+  const res = await fetch(url, { headers: githubHeaders(accessToken), cache: "no-store" });
   if (!res.ok) {
     const body = await res.text();
     throw new Error(
@@ -102,9 +104,10 @@ export async function fetchCommitFiles(
   owner: string,
   repo: string,
   sha: string,
+  accessToken?: string,
 ): Promise<GhChangedFile[]> {
   const url = new URL(`https://api.github.com/repos/${owner}/${repo}/commits/${sha}`);
-  const res = await fetch(url, { headers: githubHeaders(), cache: "no-store" });
+  const res = await fetch(url, { headers: githubHeaders(accessToken), cache: "no-store" });
   if (!res.ok) {
     const body = await res.text();
     throw new Error(
@@ -119,6 +122,7 @@ export async function fetchPullRequestFiles(
   owner: string,
   repo: string,
   pullNumber: number,
+  accessToken?: string,
 ): Promise<GhChangedFile[]> {
   const files: GhChangedFile[] = [];
   let page = 1;
@@ -128,7 +132,7 @@ export async function fetchPullRequestFiles(
     );
     url.searchParams.set("per_page", "100");
     url.searchParams.set("page", String(page));
-    const res = await fetch(url, { headers: githubHeaders(), cache: "no-store" });
+    const res = await fetch(url, { headers: githubHeaders(accessToken), cache: "no-store" });
     if (!res.ok) {
       const body = await res.text();
       throw new Error(
@@ -261,9 +265,10 @@ export async function fetchRepositoryCodeEvidence(
   repo: string,
   criteria: string[],
   limit = 8,
+  accessToken?: string,
 ): Promise<GhCodeEvidence[]> {
   const metaRes = await fetch(`https://api.github.com/repos/${owner}/${repo}`, {
-    headers: githubHeaders(),
+    headers: githubHeaders(accessToken),
     cache: "no-store",
   });
   if (!metaRes.ok) return [];
@@ -275,7 +280,7 @@ export async function fetchRepositoryCodeEvidence(
   );
   treeUrl.searchParams.set("recursive", "1");
   const treeRes = await fetch(treeUrl, {
-    headers: githubHeaders(),
+    headers: githubHeaders(accessToken),
     cache: "no-store",
   });
   if (!treeRes.ok) return [];
@@ -301,7 +306,7 @@ export async function fetchRepositoryCodeEvidence(
       .map(encodeURIComponent)
       .join("/")}`;
     const res = await fetch(rawUrl, {
-      headers: githubRawHeaders(),
+      headers: githubRawHeaders(accessToken),
       cache: "no-store",
     });
     if (!res.ok) continue;

@@ -6,9 +6,24 @@ import { getNavContext, getProjectSources } from "@/lib/data";
 import {
   addGithubRepo,
   removeGithubRepo,
+  setGithubAccessToken,
   setGithubUsername,
   syncGithubSource,
 } from "./actions";
+
+type GithubConfig = {
+  repos?: string[];
+  accessToken?: string;
+  token?: string;
+  lastSyncError?: string | null;
+  lastSyncOkAt?: string | null;
+};
+
+function maskToken(token: string | undefined): string {
+  if (!token) return "not set";
+  if (token.length <= 8) return "••••";
+  return `${token.slice(0, 4)}••••${token.slice(-4)}`;
+}
 
 export default async function SourcesPage({
   params,
@@ -29,8 +44,9 @@ export default async function SourcesPage({
   const githubSource = project.contributionSources.find(
     (s) => s.sourceType === "GITHUB",
   );
-  const githubRepos =
-    (githubSource?.configJson as { repos?: string[] } | null)?.repos ?? [];
+  const githubConfig = (githubSource?.configJson as GithubConfig | null) ?? {};
+  const githubRepos = githubConfig.repos ?? [];
+  const githubAccessToken = githubConfig.accessToken ?? githubConfig.token;
 
   return (
     <AppShell
@@ -92,6 +108,22 @@ export default async function SourcesPage({
                 hour12: true,
               })}
             </p>
+          )}
+          {githubConfig.lastSyncError && (
+            <div
+              style={{
+                border: "1px solid var(--red)",
+                color: "var(--red)",
+                borderRadius: 6,
+                padding: "10px 12px",
+                fontSize: 13,
+                margin: "-12px 0 32px",
+                maxWidth: 760,
+                lineHeight: 1.45,
+              }}
+            >
+              {githubConfig.lastSyncError}
+            </div>
           )}
 
           <div className="label" style={{ marginBottom: 14 }}>
@@ -170,6 +202,44 @@ export default async function SourcesPage({
                 Add →
               </button>
             </form>
+          )}
+
+          {isOwner && (
+            <div style={{ marginTop: 32, maxWidth: 560 }}>
+              <div className="label" style={{ marginBottom: 10 }}>
+                Private repo access
+              </div>
+              <div
+                className="mute-ink num"
+                style={{ fontSize: 12, marginBottom: 12 }}
+              >
+                Token {maskToken(githubAccessToken)}
+              </div>
+              <form
+                action={setGithubAccessToken}
+                style={{ display: "flex", gap: 10, alignItems: "center" }}
+              >
+                <input type="hidden" name="projectId" value={projectId} />
+                <input
+                  type="password"
+                  name="githubAccessToken"
+                  placeholder="Fine-grained PAT"
+                  required
+                  className="field num"
+                  style={{ flex: 1 }}
+                />
+                <button type="submit" className="pill pill-ghost pill-sm">
+                  Save token
+                </button>
+              </form>
+              <p
+                className="body mute-ink"
+                style={{ margin: "8px 0 0", fontSize: 12 }}
+              >
+                Use a fine-grained GitHub token with read access to Contents,
+                Metadata and Pull requests for the connected repos.
+              </p>
+            </div>
           )}
 
           <div

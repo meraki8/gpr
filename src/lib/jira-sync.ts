@@ -47,6 +47,8 @@ type JiraSourceConfig = {
 
 type GithubSourceConfig = {
   repos?: string[];
+  accessToken?: string;
+  token?: string;
 };
 
 function configToAuth(config: JiraSourceConfig): {
@@ -107,6 +109,7 @@ function buildIssuePayload(issue: JiraIssue): Record<string, unknown> {
 async function fetchGithubEvidenceForIssue(
   repos: string[],
   issue: JiraIssue,
+  accessToken?: string,
 ): Promise<GhCodeEvidence[]> {
   if (repos.length === 0) return [];
 
@@ -117,7 +120,13 @@ async function fetchGithubEvidenceForIssue(
     if (!owner || !name) continue;
     try {
       evidence.push(
-        ...(await fetchRepositoryCodeEvidence(owner, name, criteriaText, 4)),
+        ...(await fetchRepositoryCodeEvidence(
+          owner,
+          name,
+          criteriaText,
+          4,
+          accessToken,
+        )),
       );
     } catch {
       // AC judgement still works from Jira text if GitHub evidence is unavailable.
@@ -180,6 +189,9 @@ export async function syncJiraProject(
   });
   const githubRepos =
     (githubSource?.configJson as GithubSourceConfig | null)?.repos ?? [];
+  const githubAccessToken = (
+    githubSource?.configJson as GithubSourceConfig | null
+  )?.accessToken ?? (githubSource?.configJson as GithubSourceConfig | null)?.token;
 
   let allIssues: JiraIssue[];
   try {
@@ -286,7 +298,7 @@ export async function syncJiraProject(
         try {
           const [comments, githubEvidence] = await Promise.all([
             fetchIssueComments(ctx.auth, issue.key),
-            fetchGithubEvidenceForIssue(githubRepos, issue),
+            fetchGithubEvidenceForIssue(githubRepos, issue, githubAccessToken),
           ]);
           const verdict = await judgeAcceptanceCriteria({
             issueKey: issue.key,
