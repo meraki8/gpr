@@ -5,7 +5,7 @@ import { z } from "zod";
 import { revalidatePath } from "next/cache";
 import { requireDbUser } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { fetchBranches, fetchCommits, fetchPullRequests } from "@/lib/github";
+import { fetchCommits, fetchPullRequests } from "@/lib/github";
 import { KB_SOURCES, addKnowledgeEntries } from "@/lib/kb";
 import { recomputeMemberScores } from "@/lib/scoring";
 
@@ -190,24 +190,10 @@ export async function syncGithubSource(formData: FormData) {
   for (const repo of repos) {
     const [owner, name] = repo.split("/");
 
-    // Fetch commits from every branch and deduplicate by SHA so a commit
-    // that exists on multiple branches is only counted once.
-    const branches = await fetchBranches(owner, name);
-    const seenShas = new Set<string>();
-    const allCommits = [];
-    for (const branch of branches) {
-      const branchCommits = await fetchCommits(owner, name, since, branch.name);
-      for (const c of branchCommits) {
-        if (!seenShas.has(c.sha)) {
-          seenShas.add(c.sha);
-          allCommits.push(c);
-        }
-      }
-    }
-
-    if (allCommits.length > 0) {
+    const commits = await fetchCommits(owner, name, since);
+    if (commits.length > 0) {
       await db.contributionEvent.createMany({
-        data: allCommits.map((c) => ({
+        data: commits.map((c) => ({
           projectId,
           sourceId: source.id,
           sourceType: "GITHUB" as const,
@@ -230,7 +216,7 @@ export async function syncGithubSource(formData: FormData) {
       });
 
       await addKnowledgeEntries(
-        allCommits.map((c) => {
+        commits.map((c) => {
           const subject = c.commit.message.split("\n")[0].slice(0, 200);
           const body = c.commit.message.includes("\n")
             ? c.commit.message.split("\n").slice(1).join("\n").trim()
