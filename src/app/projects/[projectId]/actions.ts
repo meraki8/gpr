@@ -7,7 +7,7 @@ import { redirect } from "next/navigation";
 import { zodTextFormat } from "openai/helpers/zod";
 import { requireDbUser } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { sendInviteEmail } from "@/lib/email";
+import { sendInviteEmail, sendContractFullySignedEmail } from "@/lib/email";
 import { ai, AI_MODEL } from "@/lib/ai";
 import { MatchAnalysis } from "@/lib/types";
 import { getBaseUrl } from "@/lib/url";
@@ -706,7 +706,17 @@ export async function updateContract(projectId: string, content: string) {
 export async function signContract(projectId: string, typedName: string) {
   const user = await requireDbUser();
 
-  if (!typedName.trim()) throw new Error("Please type your name to sign");
+  const trimmed = typedName.trim();
+  if (!trimmed) throw new Error("Please type your name to sign");
+
+  // Validate identity: must match their registered name or email (case-insensitive).
+  const nameMatch = user.name && trimmed.toLowerCase() === user.name.toLowerCase();
+  const emailMatch = trimmed.toLowerCase() === user.email.toLowerCase();
+  if (!nameMatch && !emailMatch) {
+    throw new Error(
+      `Name doesn't match. Type your name exactly as shown (${user.name ?? user.email}) or your email address.`,
+    );
+  }
 
   const contract = await db.contract.findUnique({
     where: { projectId },
@@ -731,6 +741,37 @@ export async function signContract(projectId: string, typedName: string) {
       userId: user.id,
     },
   });
+
+  // Check if all members have now signed — if so, email everyone.
+  try {
+    const [totalMembers, totalSignatures] = await Promise.all([
+      db.projectMember.count({ where: { projectId } }),
+      db.contractSignature.count({ where: { contractId: contract.id } }),
+    ]);
+
+    if (totalSignatures >= totalMembers) {
+      const allMembers = await db.projectMember.findMany({
+        where: { projectId },
+        include: { user: { select: { name: true, email: true } } },
+      });
+      const projectRecord = await db.project.findUnique({
+        where: { id: projectId },
+        select: { name: true },
+      });
+      if (projectRecord) {
+        await sendContractFullySignedEmail({
+          projectName: projectRecord.name,
+          projectId,
+          members: allMembers.map((m) => ({
+            name: m.user.name ?? m.user.email,
+            email: m.user.email,
+          })),
+        });
+      }
+    }
+  } catch (err) {
+    console.error("[contract] fully-signed email failed:", err);
+  }
 
   revalidatePath(`/projects/${projectId}/contract`);
 }

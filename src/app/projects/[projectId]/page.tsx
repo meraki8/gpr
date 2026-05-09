@@ -22,7 +22,7 @@ import { AskGprTrigger } from "@/components/overview/ask-gpr-trigger";
 import { RefCard, cardKindFromCardType } from "@/components/ref-card";
 import { Score } from "@/components/score";
 import { requireDbUser } from "@/lib/auth";
-import { getNavContext, getProjectOverview } from "@/lib/data";
+import { checkContractGate, getNavContext, getProjectOverview } from "@/lib/data";
 
 type Overview = Awaited<ReturnType<typeof getProjectOverview>>;
 type Activity = Overview["timeline"][number];
@@ -34,6 +34,7 @@ export default async function ProjectPage({
   params: Promise<{ projectId: string }>;
 }) {
   const { projectId } = await params;
+  await checkContractGate(projectId);
   const [user, nav, overview] = await Promise.all([
     requireDbUser(),
     getNavContext({ projectId }),

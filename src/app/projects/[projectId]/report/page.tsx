@@ -4,7 +4,7 @@ import { ProgressReportActions } from "@/components/progress-report-actions";
 import { RefCard } from "@/components/ref-card";
 import { Score } from "@/components/score";
 import { requireDbUser } from "@/lib/auth";
-import { getNavContext, getProgressReport } from "@/lib/data";
+import { checkContractGate, getNavContext, getProgressReport } from "@/lib/data";
 import { serializeProgressReport } from "@/lib/progress-report";
 
 type Report = Awaited<ReturnType<typeof getProgressReport>>;
@@ -15,6 +15,7 @@ export default async function ProgressReportPage({
   params: Promise<{ projectId: string }>;
 }) {
   const { projectId } = await params;
+  await checkContractGate(projectId);
   const [user, nav, report] = await Promise.all([
     requireDbUser(),
     getNavContext({ projectId }),
