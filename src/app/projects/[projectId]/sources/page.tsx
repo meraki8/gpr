@@ -22,7 +22,7 @@ export default async function SourcesPage({
   const [user, nav, sources] = await Promise.all([
     requireDbUser(),
     getNavContext({ projectId }),
-    getProjectSources(projectId, page),
+    getProjectSources(projectId, page, "GITHUB"),
   ]);
   const { project, isOwner, hasNextPage, githubLeaderboard } = sources;
 
@@ -46,8 +46,8 @@ export default async function SourcesPage({
     >
       <main className="wrap-w" style={{ paddingBottom: 160 }}>
         <PageHead
-          eyebrow={`Sources · ${project.name}`}
-          title="Contribution sources."
+          eyebrow={`GitHub · ${project.name}`}
+          title="GitHub sources."
           sub="Commits and PRs from connected GitHub repos feed into the ref's evidence pile."
         />
 

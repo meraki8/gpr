@@ -463,7 +463,11 @@ export async function getProject(projectId: string) {
 
 const EVENTS_PER_PAGE = 10;
 
-export async function getProjectSources(projectId: string, page = 1) {
+export async function getProjectSources(
+  projectId: string,
+  page = 1,
+  eventSourceType?: "GITHUB" | "JIRA",
+) {
   const user = await requireDbUser();
 
   const member = await db.projectMember.findFirst({
@@ -485,6 +489,7 @@ export async function getProjectSources(projectId: string, page = 1) {
       },
       contributionSources: { orderBy: { createdAt: "asc" } },
       contributionEvents: {
+        where: eventSourceType ? { sourceType: eventSourceType } : undefined,
         orderBy: { occurredAt: "desc" },
         skip: (page - 1) * EVENTS_PER_PAGE,
         take: EVENTS_PER_PAGE + 1,

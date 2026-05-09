@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { AppShell } from "@/components/app-shell";
 import { PageHead } from "@/components/page-head";
 import { requireDbUser } from "@/lib/auth";
@@ -11,16 +12,19 @@ import {
 
 export default async function JiraPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ projectId: string }>;
+  searchParams: Promise<{ page?: string }>;
 }) {
-  const { projectId } = await params;
+  const [{ projectId }, sp] = await Promise.all([params, searchParams]);
+  const page = Math.max(1, parseInt(sp.page ?? "1", 10) || 1);
   const [user, nav, sources] = await Promise.all([
     requireDbUser(),
     getNavContext({ projectId }),
-    getProjectSources(projectId),
+    getProjectSources(projectId, page, "JIRA"),
   ]);
-  const { project } = sources;
+  const { project, hasNextPage } = sources;
 
   const jiraSource = project.contributionSources.find(
     (s) => s.sourceType === "JIRA",
@@ -239,6 +243,114 @@ export default async function JiraPage({
                 })}
               </ul>
             </>
+          )}
+        </section>
+
+        {/* Recent Jira activity */}
+        <section style={{ padding: "80px 0 0" }}>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "baseline",
+              justifyContent: "space-between",
+              marginBottom: 32,
+            }}
+          >
+            <div className="label">Recent Jira activity</div>
+            {(page > 1 || hasNextPage) && (
+              <span className="mute-ink" style={{ fontSize: 12 }}>
+                Page {page}
+              </span>
+            )}
+          </div>
+          {project.contributionEvents.length === 0 ? (
+            <p className="body mute-ink" style={{ margin: 0 }}>
+              {page > 1 ? "No more events." : "No Jira events yet. Connect a Jira board and run the Make.com scenario."}
+            </p>
+          ) : (
+            project.contributionEvents.map((e, i) => {
+              const payload = e.payloadJson as {
+                title?: string;
+                issueKey?: string;
+                assigneeDisplayName?: string;
+                url?: string;
+              };
+              return (
+                <div
+                  key={e.id}
+                  className="fade-up"
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "100px 100px 160px 1fr",
+                    gap: 32,
+                    padding: "16px 0",
+                    borderBottom: "1px solid var(--line-2)",
+                    alignItems: "baseline",
+                    animationDelay: `${i * 24}ms`,
+                  }}
+                >
+                  <span className="mute-ink num" style={{ fontSize: 12 }}>
+                    {e.occurredAt.toLocaleDateString(undefined, {
+                      month: "short",
+                      day: "numeric",
+                    })}
+                  </span>
+                  <span className="label" style={{ color: "var(--red)" }}>
+                    {e.eventType}
+                  </span>
+                  <span
+                    className="num"
+                    style={{
+                      fontSize: 14,
+                      fontWeight: 500,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {payload.assigneeDisplayName ?? "unassigned"}
+                  </span>
+                  <a
+                    href={payload.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="lk-mute"
+                    style={{
+                      fontSize: 14,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                      display: "block",
+                    }}
+                  >
+                    {payload.title ?? payload.issueKey ?? "—"}
+                  </a>
+                </div>
+              );
+            })
+          )}
+
+          {(page > 1 || hasNextPage) && (
+            <div style={{ display: "flex", gap: 8, marginTop: 32 }}>
+              {page > 1 && (
+                <Link
+                  href={`/projects/${projectId}/jira?page=${page - 1}`}
+                  className="pill pill-ghost pill-sm"
+                  style={{ textDecoration: "none" }}
+                >
+                  ← Newer
+                </Link>
+              )}
+              {hasNextPage && (
+                <Link
+                  href={`/projects/${projectId}/jira?page=${page + 1}`}
+                  className="pill pill-ghost pill-sm"
+                  style={{ textDecoration: "none" }}
+                >
+                  Older →
+                </Link>
+              )}
+            </div>
           )}
         </section>
       </main>
