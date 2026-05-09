@@ -703,19 +703,23 @@ export async function updateContract(projectId: string, content: string) {
   revalidatePath(`/projects/${projectId}/contract`);
 }
 
-export async function signContract(projectId: string, typedName: string) {
+export async function signContract(
+  projectId: string,
+  typedName: string,
+): Promise<{ error?: string }> {
   const user = await requireDbUser();
 
   const trimmed = typedName.trim();
-  if (!trimmed) throw new Error("Please type your name to sign");
+  if (!trimmed) return { error: "Please type your name to sign" };
 
   // Validate identity: must match their registered name or email (case-insensitive).
+  // Return as data (not throw) so production builds don't strip the message.
   const nameMatch = user.name && trimmed.toLowerCase() === user.name.toLowerCase();
   const emailMatch = trimmed.toLowerCase() === user.email.toLowerCase();
   if (!nameMatch && !emailMatch) {
-    throw new Error(
-      `Name doesn't match. Type your name exactly as shown (${user.name ?? user.email}) or your email address.`,
-    );
+    return {
+      error: `Name doesn't match. Type your name exactly as shown (${user.name ?? user.email}) or your email address.`,
+    };
   }
 
   const contract = await db.contract.findUnique({
@@ -733,7 +737,7 @@ export async function signContract(projectId: string, typedName: string) {
   const alreadySigned = await db.contractSignature.findUnique({
     where: { contractId_userId: { contractId: contract.id, userId: user.id } },
   });
-  if (alreadySigned) throw new Error("You have already signed this contract");
+  if (alreadySigned) return { error: "You have already signed this contract" };
 
   await db.contractSignature.create({
     data: {
@@ -774,6 +778,7 @@ export async function signContract(projectId: string, typedName: string) {
   }
 
   revalidatePath(`/projects/${projectId}/contract`);
+  return {};
 }
 
 export async function generateContractPdf(projectId: string) {
