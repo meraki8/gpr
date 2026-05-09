@@ -196,6 +196,47 @@ export async function syncGithubSource(formData: FormData) {
     ]),
   );
 
+  // Fallback maps for commits where GitHub's API doesn't resolve a
+  // top-level `author` (commit pushed under an unverified email,
+  // mirrored repo, etc.). The inner `commit.author` block always
+  // carries the raw name + email from the git object — try those
+  // before giving up and recording an unattributed commit.
+  const members = await db.projectMember.findMany({
+    where: { projectId, project: { deletedAt: null } },
+    include: {
+      user: { select: { id: true, email: true, name: true } },
+    },
+  });
+  const emailToUserId = new Map(
+    members.map((m) => [m.user.email.toLowerCase(), m.userId]),
+  );
+  const nameToUserId = new Map(
+    members
+      .filter((m) => m.user.name && m.user.name.trim().length > 0)
+      .map((m) => [m.user.name!.trim().toLowerCase(), m.userId]),
+  );
+
+  const resolveCommitUserId = (c: {
+    author?: { login: string } | null;
+    commit?: { author?: { name?: string; email?: string } | null };
+  }): string | null => {
+    // Primary: GitHub-resolved login.
+    let userId = c.author?.login
+      ? (usernameToUserId.get(c.author.login.toLowerCase()) ?? null)
+      : null;
+    // Fallback 1: raw author email from the git object.
+    if (!userId && c.commit?.author?.email) {
+      userId =
+        emailToUserId.get(c.commit.author.email.toLowerCase()) ?? null;
+    }
+    // Fallback 2: raw author name from the git object.
+    if (!userId && c.commit?.author?.name) {
+      userId =
+        nameToUserId.get(c.commit.author.name.trim().toLowerCase()) ?? null;
+    }
+    return userId;
+  };
+
   const since =
     source.lastSyncedAt ?? new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
 
@@ -218,9 +259,7 @@ export async function syncGithubSource(formData: FormData) {
             login: c.author?.login ?? null,
             url: c.html_url,
           },
-          userId: c.author?.login
-            ? (usernameToUserId.get(c.author.login.toLowerCase()) ?? null)
-            : null,
+          userId: resolveCommitUserId(c),
           weight: 1.0,
           occurredAt: new Date(c.commit.author?.date ?? Date.now()),
         })),
