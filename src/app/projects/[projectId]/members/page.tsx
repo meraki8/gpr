@@ -1,4 +1,6 @@
+import { ChevronDown } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
+import { CapabilityPanel } from "@/components/capability-panel";
 import { PageHead } from "@/components/page-head";
 import { Score } from "@/components/score";
 import { ResendInviteButton } from "@/components/resend-invite-button";
@@ -17,9 +19,10 @@ export default async function MembersPage({
     getProjectMembers(projectId),
   ]);
 
-  const isOwner = project.members.some(
-    (m) => m.userId === user.id && m.role === "OWNER",
+  const viewerMembership = project.members.find(
+    (m) => m.userId === user.id,
   );
+  const viewerIsOwner = viewerMembership?.role === "OWNER";
 
   return (
     <AppShell
@@ -33,74 +36,139 @@ export default async function MembersPage({
         <PageHead
           eyebrow={`Members · ${project.name}`}
           title={`${project.members.length} on the squad.`}
-          sub="Sorted by contribution score across all published reports. Ties go to the earliest joiner."
+          sub={
+            viewerIsOwner
+              ? "Click any row to see and adjust that member's capabilities. Owner permissions are locked on."
+              : "Click your row to review your capabilities on this project."
+          }
         />
 
         <section>
-          {project.members.map((m, i) => (
-            <div
-              key={m.id}
-              className="fade-up"
-              style={{
-                display: "grid",
-                gridTemplateColumns: "60px 1fr 100px 110px",
-                gap: 32,
-                padding: "26px 0",
-                borderBottom: "1px solid var(--line)",
-                alignItems: "center",
-                animationDelay: `${i * 40}ms`,
-              }}
-            >
-              <span
-                className="num display"
+          {project.members.map((m, i) => {
+            const isViewer = m.userId === user.id;
+            // Owner can edit any non-owner row's caps. Members can
+            // open their own row but only see read-only state.
+            const canExpand = viewerIsOwner || isViewer;
+            const canEdit =
+              viewerIsOwner && m.role !== "OWNER" && !isViewer;
+
+            const summary = (
+              <div
                 style={{
-                  fontSize: 30,
-                  color:
-                    i === 0 && m.contributionScore > 0
-                      ? "var(--ink)"
-                      : "var(--mute-2)",
+                  display: "grid",
+                  gridTemplateColumns: "60px 1fr 100px 110px 28px",
+                  gap: 32,
+                  padding: "26px 0",
+                  alignItems: "center",
+                  cursor: canExpand ? "pointer" : "default",
+                  listStyle: "none",
                 }}
               >
-                {String(i + 1).padStart(2, "0")}
-              </span>
-              <div style={{ minWidth: 0 }}>
-                <div
-                  className="h-s"
+                <span
+                  className="num display"
                   style={{
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
+                    fontSize: 30,
+                    color:
+                      i === 0 && m.contributionScore > 0
+                        ? "var(--ink)"
+                        : "var(--mute-2)",
                   }}
                 >
-                  {m.user.name ?? m.user.email}
+                  {String(i + 1).padStart(2, "0")}
+                </span>
+                <div style={{ minWidth: 0 }}>
+                  <div
+                    className="h-s"
+                    style={{
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {m.user.name ?? m.user.email}
+                    {isViewer && (
+                      <span
+                        className="mute-ink"
+                        style={{
+                          fontSize: 12,
+                          fontWeight: 400,
+                          marginLeft: 8,
+                        }}
+                      >
+                        (you)
+                      </span>
+                    )}
+                  </div>
+                  <div className="mute-ink" style={{ fontSize: 13 }}>
+                    {m.role.toLowerCase()} · {m.user.email}
+                  </div>
                 </div>
-                <div className="mute-ink" style={{ fontSize: 13 }}>
-                  {m.role.toLowerCase()} · {m.user.email}
+                <div style={{ textAlign: "right" }}>
+                  <Score
+                    value={m.contributionScore}
+                    size={36}
+                    color={
+                      m.contributionScore > 0
+                        ? "var(--ink)"
+                        : "var(--mute-2)"
+                    }
+                  />
+                </div>
+                <div
+                  className="mute-ink num"
+                  style={{ textAlign: "right", fontSize: 13 }}
+                >
+                  joined{" "}
+                  {m.joinedAt.toLocaleDateString(undefined, {
+                    month: "short",
+                    day: "numeric",
+                  })}
+                </div>
+                <div
+                  className="mute-ink"
+                  style={{
+                    textAlign: "right",
+                    visibility: canExpand ? "visible" : "hidden",
+                  }}
+                  aria-hidden={!canExpand}
+                >
+                  <ChevronDown size={16} />
                 </div>
               </div>
-              <div style={{ textAlign: "right" }}>
-                <Score
-                  value={m.contributionScore}
-                  size={36}
-                  color={
-                    m.contributionScore > 0
-                      ? "var(--ink)"
-                      : "var(--mute-2)"
-                  }
-                />
-              </div>
+            );
+
+            return (
               <div
-                className="mute-ink num"
-                style={{ textAlign: "right", fontSize: 13 }}
+                key={m.id}
+                className="fade-up"
+                style={{
+                  borderBottom: "1px solid var(--line)",
+                  animationDelay: `${i * 40}ms`,
+                }}
               >
-                joined{" "}
-                {m.joinedAt.toLocaleDateString(undefined, {
-                  month: "short",
-                  day: "numeric",
-                })}
+                {canExpand ? (
+                  <details>
+                    <summary
+                      style={{ listStyle: "none", cursor: "pointer" }}
+                    >
+                      {summary}
+                    </summary>
+                    <div style={{ paddingBottom: 24 }}>
+                      <CapabilityPanel
+                        projectId={project.id}
+                        projectMemberId={m.id}
+                        memberRole={m.role}
+                        storedCapabilities={m.capabilities}
+                        viewerCanEdit={canEdit}
+                      />
+                    </div>
+                  </details>
+                ) : (
+                  summary
+                )}
               </div>
-            </div>
-          ))}
+            );
+          })}
         </section>
 
         {project.invites.length > 0 && (
@@ -150,7 +218,9 @@ export default async function MembersPage({
                     >
                       {daysLeft} day{daysLeft === 1 ? "" : "s"} left
                     </span>
-                    {isOwner && <ResendInviteButton inviteId={inv.id} />}
+                    {viewerIsOwner && (
+                      <ResendInviteButton inviteId={inv.id} />
+                    )}
                   </li>
                 );
               })}

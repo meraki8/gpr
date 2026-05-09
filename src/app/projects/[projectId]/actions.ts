@@ -17,6 +17,7 @@ import {
   formatKbForPrompt,
   getRecentKbEntries,
 } from "@/lib/kb";
+import { CAPABILITIES, resolveCapability } from "@/lib/capabilities";
 
 const InviteSchema = z.object({
   projectId: z.string().min(1),
@@ -203,22 +204,30 @@ export async function analyzeTranscript(formData: FormData) {
     throw new Error("Invalid meeting timestamp");
   }
 
-  // First confirm membership at all (so we can give a useful error
-  // for the member-but-not-owner case instead of a generic 403).
+  // Permission via capability — owner always has it; for members,
+  // run_analysis defaults enabled and can be toggled off by the owner
+  // on the Members page.
   const membership = await db.projectMember.findFirst({
     where: {
       projectId,
       userId: user.id,
       project: { deletedAt: null },
     },
-    select: { role: true },
+    include: {
+      capabilities: { select: { capability: true, enabled: true } },
+    },
   });
   if (!membership) {
     throw new Error("You don't have access to this project");
   }
-  if (membership.role !== "OWNER") {
+  const canRun = resolveCapability(
+    membership.role,
+    CAPABILITIES.RUN_ANALYSIS,
+    membership.capabilities,
+  );
+  if (!canRun) {
     throw new Error(
-      "Only the project owner can run transcript analysis",
+      "You do not have permission to run analysis on this project.",
     );
   }
 

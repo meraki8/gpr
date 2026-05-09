@@ -11,13 +11,12 @@ export default async function TranscriptsPage({
   params: Promise<{ projectId: string }>;
 }) {
   const { projectId } = await params;
-  const [user, nav, { project, isOwner }] = await Promise.all([
-    requireDbUser(),
-    getNavContext({ projectId }),
-    getProjectTranscripts(projectId),
-  ]);
-  // Project members get the form; the action enforces OWNER-only on
-  // the server. Role is surfaced inline so it's never invisibly gated.
+  const [user, nav, { project, isOwner, canRunAnalysis }] =
+    await Promise.all([
+      requireDbUser(),
+      getNavContext({ projectId }),
+      getProjectTranscripts(projectId),
+    ]);
   const roleLabel = isOwner ? "Owner" : "Member";
 
   return (
@@ -62,22 +61,30 @@ export default async function TranscriptsPage({
               You · {roleLabel}
             </span>
           </div>
-          {!isOwner && (
+          {canRunAnalysis ? (
+            <TranscriptUploadForm projectId={project.id} />
+          ) : (
             <p
-              className="mute-ink"
+              role="alert"
               style={{
-                fontSize: 13,
-                marginTop: 0,
-                marginBottom: 18,
+                fontSize: 14,
+                margin: 0,
+                padding: "16px 18px",
+                border: "1px solid var(--line)",
+                borderRadius: 6,
+                background: "var(--paper)",
                 maxWidth: 640,
               }}
             >
-              Heads up: only the project owner can run analysis. If
-              that&apos;s you, your role here may be misset — verify
-              your project membership.
+              You do not have permission to run analysis on this
+              project.{" "}
+              <span className="mute-ink" style={{ fontSize: 13 }}>
+                Ask the project owner to enable{" "}
+                <code style={{ fontSize: 12 }}>run_analysis</code> on
+                your member row.
+              </span>
             </p>
           )}
-          <TranscriptUploadForm projectId={project.id} />
         </section>
 
         <section style={{ paddingTop: project.transcripts.length > 0 ? 40 : 0 }}>

@@ -162,13 +162,32 @@ model ProjectMember {
   joinedAt          DateTime    @default(now())
   updatedAt         DateTime    @updatedAt
 
-  project          Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  user             User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project          Project            @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user             User               @relation(fields: [userId], references: [id], onDelete: Cascade)
   sourceIdentities SourceIdentity[]
   scoreSnapshots   ScoreSnapshot[]
+  capabilities     MemberCapability[]
 
   @@unique([projectId, userId])
   @@index([userId])
+}
+
+// Per-member capability toggles. `capability` is a free-form string
+// so adding new permissions doesn't require a migration. Absence of
+// a row means "default" (enabled for member-toggleable capabilities,
+// owners always get everything regardless of stored values).
+model MemberCapability {
+  id              String   @id @default(cuid())
+  projectMemberId String
+  capability      String
+  enabled         Boolean  @default(true)
+  updatedAt       DateTime @updatedAt
+  createdAt       DateTime @default(now())
+
+  projectMember ProjectMember @relation(fields: [projectMemberId], references: [id], onDelete: Cascade)
+
+  @@unique([projectMemberId, capability])
+  @@index([projectMemberId])
 }
 
 model ProjectInvite {

@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import { db } from "./db";
 import { requireDbUser } from "./auth";
+import { CAPABILITIES, resolveCapability } from "./capabilities";
 
 export async function getMyGroups() {
   const user = await requireDbUser();
@@ -280,7 +281,10 @@ export async function getProjectMembers(projectId: string) {
     include: {
       group: true,
       members: {
-        include: { user: true },
+        include: {
+          user: true,
+          capabilities: { select: { capability: true, enabled: true } },
+        },
         orderBy: [{ contributionScore: "desc" }, { joinedAt: "asc" }],
       },
       invites: {
@@ -310,7 +314,13 @@ export async function getProjectTranscripts(projectId: string) {
           matchReports: { select: { id: true, status: true } },
         },
       },
-      members: { where: { userId: user.id }, take: 1 },
+      members: {
+        where: { userId: user.id },
+        take: 1,
+        include: {
+          capabilities: { select: { capability: true, enabled: true } },
+        },
+      },
     },
   });
   if (!project) notFound();
@@ -350,8 +360,23 @@ export async function getProjectTranscripts(projectId: string) {
       : 0,
   }));
 
-  const isOwner = project.members[0]?.role === "OWNER";
-  return { project: { ...project, transcripts }, isOwner };
+  const viewerMember = project.members[0];
+  const isOwner = viewerMember?.role === "OWNER";
+  // Resolved here because the page needs to know whether to render
+  // the upload form. Owner always has it; member depends on stored
+  // capability toggle (default enabled).
+  const canRunAnalysis = viewerMember
+    ? resolveCapability(
+        viewerMember.role,
+        CAPABILITIES.RUN_ANALYSIS,
+        viewerMember.capabilities,
+      )
+    : false;
+  return {
+    project: { ...project, transcripts },
+    isOwner,
+    canRunAnalysis,
+  };
 }
 
 export async function getProjectReportsList(projectId: string) {
