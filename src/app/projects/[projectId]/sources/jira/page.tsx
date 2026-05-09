@@ -9,7 +9,7 @@ import {
   disconnectJira,
   setJiraAccountId,
   syncJiraSource,
-} from "../sources/actions";
+} from "../actions";
 
 type JiraConfig = {
   projectKey?: string;
@@ -138,7 +138,9 @@ export default async function JiraPage({
               Jira
             </h2>
             <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
-              {isOwner && isConnectedWithApi && (
+              {/* Sync is open to any member; Disconnect stays
+                  owner-only since it's destructive. */}
+              {isConnectedWithApi && (
                 <form action={syncJiraSource}>
                   <input type="hidden" name="projectId" value={projectId} />
                   <button type="submit" className="pill pill-red">
@@ -572,7 +574,7 @@ export default async function JiraPage({
             <div style={{ display: "flex", gap: 8, marginTop: 32 }}>
               {page > 1 && (
                 <Link
-                  href={`/projects/${projectId}/jira?page=${page - 1}`}
+                  href={`/projects/${projectId}/sources/jira?page=${page - 1}`}
                   className="pill pill-ghost pill-sm"
                   style={{ textDecoration: "none" }}
                 >
@@ -581,7 +583,7 @@ export default async function JiraPage({
               )}
               {hasNextPage && (
                 <Link
-                  href={`/projects/${projectId}/jira?page=${page + 1}`}
+                  href={`/projects/${projectId}/sources/jira?page=${page + 1}`}
                   className="pill pill-ghost pill-sm"
                   style={{ textDecoration: "none" }}
                 >

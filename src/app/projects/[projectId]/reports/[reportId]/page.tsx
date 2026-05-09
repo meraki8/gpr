@@ -1,9 +1,10 @@
 import Link from "next/link";
 import { AppShell } from "@/components/app-shell";
+import { FormatBadge } from "@/components/format-badge";
 import { Score } from "@/components/score";
 import { RefCard, cardKindFromCardType } from "@/components/ref-card";
 import { requireDbUser } from "@/lib/auth";
-import { getMatchReport, getNavContext } from "@/lib/data";
+import { checkContractGate, getMatchReport, getNavContext } from "@/lib/data";
 
 export default async function ReportPage({
   params,
@@ -11,6 +12,7 @@ export default async function ReportPage({
   params: Promise<{ projectId: string; reportId: string }>;
 }) {
   const { projectId, reportId } = await params;
+  await checkContractGate(projectId);
   const [user, nav, report] = await Promise.all([
     requireDbUser(),
     getNavContext({ projectId }),
@@ -55,6 +57,33 @@ export default async function ReportPage({
           >
             {headerLabel}
           </div>
+          {report.transcript?.sourceFormat && (
+            <div
+              className="fade-up"
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 8,
+                marginBottom: 18,
+                fontSize: 13,
+                color: "var(--mute)",
+              }}
+            >
+              <span>Analysed from</span>
+              <FormatBadge
+                format={report.transcript.sourceFormat}
+                size="md"
+              />
+              <span>
+                ·{" "}
+                {report.createdAt.toLocaleDateString(undefined, {
+                  month: "short",
+                  day: "numeric",
+                  year: "numeric",
+                })}
+              </span>
+            </div>
+          )}
           <h1
             className="display fade-up"
             style={{

@@ -23,6 +23,17 @@ type GithubConfig = {
   lastSyncOkAt?: string | null;
 };
 
+// Any member of this project can configure / sync a source. Per
+// product philosophy: no unnecessary owner gates. Reserve owner-only
+// for destructive actions (removeGithubRepo, disconnectJira).
+async function requireMember(projectId: string, userId: string) {
+  const member = await db.projectMember.findFirst({
+    where: { projectId, userId, project: { deletedAt: null } },
+    select: { id: true },
+  });
+  if (!member) throw new Error("FORBIDDEN");
+}
+
 const RepoSchema = z.object({
   projectId: z.string().min(1),
   repo: z
@@ -45,7 +56,7 @@ export async function addGithubRepo(formData: FormData) {
   }
 
   const { projectId, repo } = parsed.data;
-  await requireOwner(projectId, user.id);
+  await requireMember(projectId, user.id);
 
   const existing = await db.contributionSource.findUnique({
     where: { projectId_sourceType: { projectId, sourceType: "GITHUB" } },
@@ -76,7 +87,7 @@ export async function addGithubRepo(formData: FormData) {
     });
   }
 
-  revalidatePath(`/projects/${projectId}/sources`);
+  revalidatePath(`/projects/${projectId}/sources/github`);
 }
 
 const RemoveRepoSchema = z.object({
@@ -109,7 +120,7 @@ export async function removeGithubRepo(formData: FormData) {
     data: { configJson: { ...existingConfig, repos: newRepos } },
   });
 
-  revalidatePath(`/projects/${projectId}/sources`);
+  revalidatePath(`/projects/${projectId}/sources/github`);
 }
 
 const GithubTokenSchema = z.object({
@@ -177,7 +188,7 @@ export async function setGithubUsername(formData: FormData) {
   }
 
   const { projectId, projectMemberId, externalId } = parsed.data;
-  await requireOwner(projectId, user.id);
+  await requireMember(projectId, user.id);
 
   const member = await db.projectMember.findFirst({
     where: { id: projectMemberId, projectId },
@@ -201,7 +212,7 @@ export async function setGithubUsername(formData: FormData) {
     update: { externalId, verified: false },
   });
 
-  revalidatePath(`/projects/${projectId}/sources`);
+  revalidatePath(`/projects/${projectId}/sources/github`);
 }
 
 const SyncSchema = z.object({
@@ -216,14 +227,14 @@ export async function syncGithubSource(formData: FormData) {
   if (!parsed.success) throw new Error("Invalid input");
 
   const { projectId } = parsed.data;
-  await requireOwner(projectId, user.id);
+  await requireMember(projectId, user.id);
 
   const summary = await syncGithubProject(projectId);
   if (summary.errors.length > 0 && summary.repos === 0) {
     throw new Error(summary.errors[0]);
   }
 
-  revalidatePath(`/projects/${projectId}/sources`);
+  revalidatePath(`/projects/${projectId}/sources/github`);
   revalidatePath(`/projects/${projectId}`);
   revalidatePath(`/projects/${projectId}/kb`);
   revalidatePath(`/projects/${projectId}/leaderboard`);
@@ -275,7 +286,7 @@ export async function connectJira(formData: FormData) {
     jiraEmail,
     jiraApiToken,
   } = parsed.data;
-  await requireOwner(projectId, user.id);
+  await requireMember(projectId, user.id);
 
   const baseUrl = normaliseJiraBaseUrl(jiraBaseUrl);
 
@@ -309,8 +320,8 @@ export async function connectJira(formData: FormData) {
     });
   }
 
-  revalidatePath(`/projects/${projectId}/jira`);
-  revalidatePath(`/projects/${projectId}/sources`);
+  revalidatePath(`/projects/${projectId}/sources/jira`);
+  revalidatePath(`/projects/${projectId}/sources/github`);
 }
 
 const JiraDisconnectSchema = z.object({ projectId: z.string().min(1) });
@@ -327,8 +338,8 @@ export async function disconnectJira(formData: FormData) {
     where: { projectId, sourceType: "JIRA" },
   });
 
-  revalidatePath(`/projects/${projectId}/jira`);
-  revalidatePath(`/projects/${projectId}/sources`);
+  revalidatePath(`/projects/${projectId}/sources/jira`);
+  revalidatePath(`/projects/${projectId}/sources/github`);
 }
 
 const JiraIdentitySchema = z.object({
@@ -349,7 +360,7 @@ export async function setJiraAccountId(formData: FormData) {
   }
 
   const { projectId, projectMemberId, externalId } = parsed.data;
-  await requireOwner(projectId, user.id);
+  await requireMember(projectId, user.id);
 
   const member = await db.projectMember.findFirst({
     where: { id: projectMemberId, projectId },
@@ -362,8 +373,8 @@ export async function setJiraAccountId(formData: FormData) {
     update: { externalId, verified: false },
   });
 
-  revalidatePath(`/projects/${projectId}/jira`);
-  revalidatePath(`/projects/${projectId}/sources`);
+  revalidatePath(`/projects/${projectId}/sources/jira`);
+  revalidatePath(`/projects/${projectId}/sources/github`);
 }
 
 const SyncJiraSchema = z.object({ projectId: z.string().min(1) });
@@ -376,7 +387,7 @@ export async function syncJiraSource(formData: FormData) {
   if (!parsed.success) throw new Error("Invalid input");
 
   const { projectId } = parsed.data;
-  await requireOwner(projectId, user.id);
+  await requireMember(projectId, user.id);
 
   const summary = await syncJiraProject(projectId);
 
@@ -384,7 +395,7 @@ export async function syncJiraSource(formData: FormData) {
     throw new Error(summary.errors[0]);
   }
 
-  revalidatePath(`/projects/${projectId}/jira`);
+  revalidatePath(`/projects/${projectId}/sources/jira`);
   revalidatePath(`/projects/${projectId}`);
   revalidatePath(`/projects/${projectId}/kb`);
   revalidatePath(`/projects/${projectId}/leaderboard`);

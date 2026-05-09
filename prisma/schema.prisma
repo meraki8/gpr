@@ -63,16 +63,17 @@ model User {
   createdAt           DateTime        @default(now())
   updatedAt           DateTime        @updatedAt
 
-  ownedGroups         Group[]         @relation("GroupOwner")
-  groupMemberships    GroupMember[]
-  projectMemberships  ProjectMember[]
-  uploadedFiles       ContextFile[]   @relation("FileUploader")
-  uploadedTranscripts Transcript[]    @relation("TranscriptUploader")
-  assignedTasks       Task[]          @relation("TaskAssignee")
-  cardsAgainst        Card[]          @relation("CardSubject")
-  invitesSent         ProjectInvite[] @relation("InviteSender")
-  memberReports       MemberReport[]
-  notifications       Notification[]
+  ownedGroups           Group[]             @relation("GroupOwner")
+  groupMemberships      GroupMember[]
+  projectMemberships    ProjectMember[]
+  uploadedFiles         ContextFile[]       @relation("FileUploader")
+  uploadedTranscripts   Transcript[]        @relation("TranscriptUploader")
+  assignedTasks         Task[]              @relation("TaskAssignee")
+  cardsAgainst          Card[]              @relation("CardSubject")
+  invitesSent           ProjectInvite[]     @relation("InviteSender")
+  memberReports         MemberReport[]
+  notifications         Notification[]
+  contractSignatures    ContractSignature[]
 
   @@index([clerkUserId])
   @@index([email])
@@ -132,6 +133,7 @@ model Project {
   sourceIdentities    SourceIdentity[]
   notifications       Notification[]
   knowledgeEntries    KnowledgeEntry[]
+  contract            Contract?
 
   @@index([groupId])
   @@index([deletedAt])
@@ -208,15 +210,19 @@ model ContextFile {
 }
 
 model Transcript {
-  id         String           @id @default(cuid())
-  projectId  String
-  uploadedBy String
-  title      String?
-  meetingAt  DateTime?
-  rawText    String           @db.Text
-  blobUrl    String?
-  source     TranscriptSource
-  createdAt  DateTime         @default(now())
+  id           String           @id @default(cuid())
+  projectId    String
+  uploadedBy   String
+  title        String?
+  meetingAt    DateTime?
+  rawText      String           @db.Text
+  blobUrl      String?
+  source       TranscriptSource
+  // Auto-detected platform format (discord, slack, whatsapp, email,
+  // zoom, meeting, other). Distinct from `source`, which records the
+  // upload origin (PASTE / FILE).
+  sourceFormat String?
+  createdAt    DateTime         @default(now())
 
   project      Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
   uploader     User          @relation("TranscriptUploader", fields: [uploadedBy], references: [id])
@@ -379,12 +385,30 @@ model ScoreSnapshot {
   @@index([computedAt])
 }
 
+// Project-level health score snapshots — taken after each transcript
+// analysis so we can render an "X since last meeting" trend without
+// recomputing the historical formula from scratch.
+model ProjectHealthSnapshot {
+  id            String   @id @default(cuid())
+  projectId     String
+  score         Int
+  matchReportId String?  @unique
+  reason        String   @db.Text
+  computedAt    DateTime @default(now())
+
+  @@index([projectId, computedAt])
+}
+
 // =================== KNOWLEDGE BASE ===================
 
 model KnowledgeEntry {
   id              String    @id @default(cuid())
   projectId       String
   source          String
+  // Optional secondary tag inherited from the parent transcript when
+  // this entry was extracted during analysis (discord, slack, …).
+  // Lets the KB UI render a dual badge "TRANSCRIPT · DISCORD".
+  sourceFormat    String?
   sourceRefId     String?
   sourceTypeLabel String?
   title           String
@@ -398,6 +422,34 @@ model KnowledgeEntry {
   @@unique([projectId, source, sourceRefId])
   @@index([projectId, createdAt])
   @@index([projectId, source])
+}
+
+// =================== CONTRACTS ===================
+
+model Contract {
+  id        String   @id @default(cuid())
+  projectId String   @unique
+  content   String   @db.Text
+  pdfUrl    String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  project    Project             @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  signatures ContractSignature[]
+}
+
+model ContractSignature {
+  id         String   @id @default(cuid())
+  contractId String
+  userId     String
+  signedAt   DateTime @default(now())
+
+  contract Contract @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([contractId, userId])
+  @@index([contractId])
+  @@index([userId])
 }
 
 // =================== NOTIFICATIONS ===================

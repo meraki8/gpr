@@ -28,6 +28,23 @@ export default async function InvitePage({
     );
   }
   if (invite.acceptedAt) {
+    // Even if the invite is marked accepted, the current user may not be a
+    // project member yet (e.g. auto-claim ran but didn't add them). Add them
+    // now if they're signed in and their email matches the invite.
+    const { userId: clerkUserId } = await auth();
+    if (clerkUserId) {
+      const dbUser = await db.user.findFirst({ where: { clerkUserId } });
+      if (dbUser && dbUser.email.toLowerCase() === invite.email.toLowerCase()) {
+        const alreadyMember = await db.projectMember.findUnique({
+          where: { projectId_userId: { projectId: invite.projectId, userId: dbUser.id } },
+        });
+        if (!alreadyMember) {
+          await db.projectMember.create({
+            data: { projectId: invite.projectId, userId: dbUser.id, role: "MEMBER" },
+          });
+        }
+      }
+    }
     return (
       <ErrorScreen
         title="Already accepted."

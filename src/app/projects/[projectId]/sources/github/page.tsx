@@ -9,7 +9,7 @@ import {
   setGithubAccessToken,
   setGithubUsername,
   syncGithubSource,
-} from "./actions";
+} from "../actions";
 
 type GithubConfig = {
   repos?: string[];
@@ -40,6 +40,9 @@ export default async function SourcesPage({
     getProjectSources(projectId, page, "GITHUB"),
   ]);
   const { project, isOwner, hasNextPage, githubLeaderboard } = sources;
+  // Any project member can configure / sync sources. Only destructive
+  // actions (remove repo, disconnect Jira) stay owner-gated.
+  const canManage = true;
 
   const githubSource = project.contributionSources.find(
     (s) => s.sourceType === "GITHUB",
@@ -87,7 +90,7 @@ export default async function SourcesPage({
             <h2 className="h-m" style={{ margin: 0 }}>
               GitHub
             </h2>
-            {isOwner && githubSource && githubRepos.length > 0 && (
+            {canManage && githubSource && githubRepos.length > 0 && (
               <form action={syncGithubSource}>
                 <input type="hidden" name="projectId" value={projectId} />
                 <button type="submit" className="pill pill-red">
@@ -184,7 +187,7 @@ export default async function SourcesPage({
             </ul>
           )}
 
-          {isOwner && (
+          {canManage && (
             <form
               action={addGithubRepo}
               style={{ display: "flex", gap: 10, maxWidth: 480 }}
@@ -288,7 +291,7 @@ export default async function SourcesPage({
                       {m.user.email}
                     </div>
                   </div>
-                  {isOwner ? (
+                  {canManage ? (
                     <form
                       action={setGithubUsername}
                       style={{ display: "flex", gap: 8, alignItems: "center" }}

@@ -3,15 +3,20 @@ import {
   AlertTriangle,
   ArrowUpRight,
   BookOpen,
+  FileBarChart,
   FileText,
   GitCommit,
+  Minus,
   ScrollText,
+  TrendingDown,
+  TrendingUp,
   Trophy,
   UserPlus,
   Users,
 } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { ExpandableBrief } from "@/components/overview/expandable-brief";
+import { HealthBreakdown } from "@/components/overview/health-breakdown";
 import { LiveCountdown } from "@/components/overview/live-countdown";
 import { AskGprTrigger } from "@/components/overview/ask-gpr-trigger";
 import { RefCard, cardKindFromCardType } from "@/components/ref-card";
@@ -38,6 +43,10 @@ export default async function ProjectPage({
     project,
     isOwner,
     counts,
+    healthScore,
+    healthBreakdown,
+    healthTrend,
+    previousHealthScore,
     latestReport,
     timeline,
     commitments,
@@ -66,6 +75,10 @@ export default async function ProjectPage({
         <ProjectHeader
           project={project}
           counts={counts}
+          healthScore={healthScore}
+          healthBreakdown={healthBreakdown}
+          healthTrend={healthTrend}
+          previousHealthScore={previousHealthScore}
           isOwner={isOwner}
         />
 
@@ -123,16 +136,24 @@ export default async function ProjectPage({
 function ProjectHeader({
   project,
   counts,
+  healthScore,
+  healthBreakdown,
+  healthTrend,
+  previousHealthScore,
   isOwner,
 }: {
   project: Overview["project"];
   counts: Overview["counts"];
+  healthScore: number;
+  healthBreakdown: Overview["healthBreakdown"];
+  healthTrend: number;
+  previousHealthScore: number | null;
   isOwner: boolean;
 }) {
   const healthColor =
-    project.healthScore >= 80
+    healthScore >= 80
       ? "var(--status-good, #16a34a)"
-      : project.healthScore >= 50
+      : healthScore >= 50
         ? "var(--status-watch, #d97706)"
         : "var(--red)";
   return (
@@ -196,19 +217,41 @@ function ProjectHeader({
             borderRadius: 12,
             padding: "20px 22px",
             background: "var(--paper)",
+            position: "relative",
           }}
         >
-          <div className="label" style={{ marginBottom: 12 }}>
-            Project health
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              marginBottom: 12,
+            }}
+          >
+            <span className="label">Project health</span>
+            <HealthBreakdown breakdown={healthBreakdown} />
           </div>
-          <Score value={project.healthScore} size={84} color={healthColor} />
+          <div
+            style={{
+              display: "flex",
+              alignItems: "baseline",
+              gap: 12,
+              flexWrap: "wrap",
+            }}
+          >
+            <Score value={healthScore} size={84} color={healthColor} />
+            <HealthTrendChip
+              trend={healthTrend}
+              hasPrevious={previousHealthScore !== null}
+            />
+          </div>
           <div
             className="mute-ink"
             style={{ fontSize: 12, marginTop: 12, lineHeight: 1.45 }}
           >
-            {project.healthScore >= 80
+            {healthScore >= 80
               ? "Squad's pulling. Keep it up."
-              : project.healthScore >= 50
+              : healthScore >= 50
                 ? "Mixed signals. Time for a stand-up."
                 : "Red zone. Someone needs to step up."}
           </div>
@@ -252,6 +295,68 @@ function ProjectHeader({
         }
       `}</style>
     </section>
+  );
+}
+
+function HealthTrendChip({
+  trend,
+  hasPrevious,
+}: {
+  trend: number;
+  hasPrevious: boolean;
+}) {
+  // No prior snapshot — nothing to compare against yet.
+  if (!hasPrevious || trend === 0) {
+    return (
+      <span
+        title={
+          hasPrevious
+            ? "No change since last meeting"
+            : "No prior meeting to compare against"
+        }
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 4,
+          fontSize: 13,
+          color: "var(--mute)",
+          fontWeight: 500,
+        }}
+      >
+        <Minus size={14} />
+        <span className="num">—</span>
+      </span>
+    );
+  }
+  const positive = trend > 0;
+  const color = positive ? "var(--status-good, #16a34a)" : "var(--red)";
+  const Icon = positive ? TrendingUp : TrendingDown;
+  return (
+    <span
+      title={`${positive ? "+" : ""}${trend} since last meeting`}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 5,
+        fontSize: 14,
+        fontWeight: 700,
+        color,
+        letterSpacing: "-0.01em",
+        lineHeight: 1,
+      }}
+    >
+      <Icon size={16} strokeWidth={2.5} />
+      <span className="num">
+        {positive ? "+" : ""}
+        {trend}
+      </span>
+      <span
+        className="mute-ink"
+        style={{ fontSize: 11, fontWeight: 500, marginLeft: 2 }}
+      >
+        since last meeting
+      </span>
+    </span>
   );
 }
 
@@ -1068,6 +1173,20 @@ function QuickActions({ projectId }: { projectId: string }) {
         >
           <UserPlus size={14} strokeWidth={2.2} />
           Invite member
+        </Link>
+        <Link
+          href={`/projects/${projectId}/report`}
+          className="pill pill-ghost"
+          style={{
+            textDecoration: "none",
+            justifyContent: "center",
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 6,
+          }}
+        >
+          <FileBarChart size={14} strokeWidth={2.2} />
+          Progress Report
         </Link>
         <AskGprTrigger />
         <Link

@@ -1,7 +1,22 @@
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { db } from "./db";
 import { requireDbUser } from "./auth";
 import { CAPABILITIES, resolveCapability } from "./capabilities";
+import { computeProjectHealth } from "./health";
+
+export async function checkContractGate(projectId: string) {
+  const user = await requireDbUser();
+  const contract = await db.contract.findUnique({
+    where: { projectId },
+    select: {
+      id: true,
+      signatures: { where: { userId: user.id }, select: { id: true } },
+    },
+  });
+  if (contract && contract.signatures.length === 0) {
+    redirect(`/projects/${projectId}/contract`);
+  }
+}
 
 export async function getMyGroups() {
   const user = await requireDbUser();
@@ -401,6 +416,35 @@ export async function getProjectOverview(projectId: string) {
     };
   });
 
+  const health = await computeProjectHealth(projectId);
+
+  // Trend = current health vs the snapshot taken right before the
+  // most recent transcript analysis. Snapshots are written *after*
+  // analysis, so the most recent snapshot is the score *as of* the
+  // latest meeting. To answer "since last meeting" we compare today
+  // against the second-most-recent snapshot. If only one snapshot
+  // exists we fall back to comparing against it directly so the
+  // first analysis still shows a delta from the implicit 100
+  // baseline. Wrapped in try/catch so the page still renders if the
+  // migration that introduced this table hasn't run yet.
+  let previousHealthScore: number | null = null;
+  try {
+    const recentSnapshots = await db.projectHealthSnapshot.findMany({
+      where: { projectId },
+      orderBy: { computedAt: "desc" },
+      take: 2,
+      select: { score: true, computedAt: true },
+    });
+    previousHealthScore =
+      recentSnapshots.length >= 2
+        ? recentSnapshots[1].score
+        : (recentSnapshots[0]?.score ?? null);
+  } catch (err) {
+    console.error("[overview] health snapshot lookup failed:", err);
+  }
+  const healthTrend =
+    previousHealthScore !== null ? health.score - previousHealthScore : 0;
+
   return {
     project,
     isOwner,
@@ -410,6 +454,10 @@ export async function getProjectOverview(projectId: string) {
       cards: cardsCount,
       kb: kbCount,
     },
+    healthScore: health.score,
+    healthBreakdown: health,
+    healthTrend,
+    previousHealthScore,
     latestReport,
     timeline,
     commitments,
@@ -1033,13 +1081,8 @@ export async function getProjectLeaderboard(projectId: string) {
   const totalMeetings = await db.matchReport.count({
     where: { projectId },
   });
-  const healthScore =
-    enrichedMembers.length === 0
-      ? 0
-      : Math.round(
-          enrichedMembers.reduce((s, m) => s + m.contributionScore, 0) /
-            enrichedMembers.length,
-        );
+  const health = await computeProjectHealth(projectId);
+  const healthScore = health.score;
   const mostImproved =
     enrichedMembers
       .filter((m) => m.weekDelta > 0)
@@ -1320,4 +1363,222 @@ export async function getMatchReport(reportId: string) {
   // The AI is the ref — every card is final, every report is final.
   // Anyone on the project sees everything.
   return { ...report, isOwner };
+}
+
+export async function getProjectContract(projectId: string) {
+  const user = await requireDbUser();
+  const project = await db.project.findFirst({
+    where: {
+      id: projectId,
+      deletedAt: null,
+      members: { some: { userId: user.id } },
+    },
+    include: {
+      group: true,
+      members: {
+        include: {
+          user: { select: { id: true, name: true, email: true } },
+        },
+      },
+      contract: {
+        include: {
+          signatures: {
+            include: {
+              user: { select: { id: true, name: true, email: true } },
+            },
+          },
+        },
+      },
+    },
+  });
+  if (!project) notFound();
+
+  const viewerMember = project.members.find((m) => m.userId === user.id);
+  const isOwner = viewerMember?.role === "OWNER";
+  const hasSigned = project.contract
+    ? project.contract.signatures.some((s) => s.userId === user.id)
+    : false;
+
+  return { project, contract: project.contract, isOwner, hasSigned, user };
+}
+
+// Read-only aggregation for the Progress Report page. Pulls the
+// existing data the overview page already exposes plus a couple of
+// extra slices (per-member commit counts, every meeting, every
+// commitment, last 10 transcript decisions). All reads — no writes.
+export async function getProgressReport(projectId: string) {
+  const user = await requireDbUser();
+
+  const project = await db.project.findFirst({
+    where: {
+      id: projectId,
+      deletedAt: null,
+      members: { some: { userId: user.id } },
+    },
+    include: {
+      group: { select: { id: true, name: true } },
+      members: {
+        orderBy: [{ contributionScore: "desc" }, { joinedAt: "asc" }],
+        include: { user: true },
+      },
+    },
+  });
+  if (!project) notFound();
+
+  const [
+    health,
+    allCards,
+    matchReports,
+    githubEvents,
+    memberReports,
+    commitments,
+    decisions,
+  ] = await Promise.all([
+    computeProjectHealth(projectId),
+    db.card.findMany({
+      where: { projectId },
+      select: { userId: true, cardType: true },
+    }),
+    db.matchReport.findMany({
+      where: { projectId },
+      orderBy: { createdAt: "desc" },
+      include: {
+        transcript: { select: { title: true, meetingAt: true } },
+        memberReports: {
+          orderBy: { contributionScore: "desc" },
+          take: 1,
+          include: {
+            user: { select: { id: true, name: true, email: true } },
+          },
+        },
+      },
+    }),
+    db.contributionEvent.findMany({
+      where: {
+        projectId,
+        sourceType: "GITHUB",
+        eventType: "commit",
+      },
+      select: { userId: true },
+    }),
+    db.memberReport.findMany({
+      where: { matchReport: { projectId } },
+      select: { userId: true },
+    }),
+    db.knowledgeEntry.findMany({
+      where: {
+        projectId,
+        source: "transcript",
+        assignedTo: { not: null },
+        targetDate: { not: null },
+      },
+      orderBy: { targetDate: "asc" },
+      select: {
+        id: true,
+        title: true,
+        assignedTo: true,
+        targetDate: true,
+        sourceTypeLabel: true,
+      },
+    }),
+    db.knowledgeEntry.findMany({
+      where: { projectId, source: "transcript" },
+      orderBy: { createdAt: "desc" },
+      take: 10,
+      select: {
+        id: true,
+        title: true,
+        content: true,
+        createdAt: true,
+        assignedTo: true,
+      },
+    }),
+  ]);
+
+  const cardCountsByUser = new Map<
+    string,
+    { mvp: number; y: number; r: number }
+  >();
+  for (const c of allCards) {
+    const bucket = cardCountsByUser.get(c.userId) ?? { mvp: 0, y: 0, r: 0 };
+    if (c.cardType === "MVP") bucket.mvp += 1;
+    else if (c.cardType === "YELLOW") bucket.y += 1;
+    else if (c.cardType === "RED") bucket.r += 1;
+    cardCountsByUser.set(c.userId, bucket);
+  }
+
+  const meetingCountsByUser = new Map<string, number>();
+  for (const mr of memberReports) {
+    meetingCountsByUser.set(
+      mr.userId,
+      (meetingCountsByUser.get(mr.userId) ?? 0) + 1,
+    );
+  }
+
+  const commitsByUser = new Map<string, number>();
+  for (const ev of githubEvents) {
+    if (!ev.userId) continue;
+    commitsByUser.set(ev.userId, (commitsByUser.get(ev.userId) ?? 0) + 1);
+  }
+  const githubConnected = githubEvents.length > 0;
+
+  const memberRows = project.members.map((m) => ({
+    id: m.userId,
+    name: m.user.name,
+    email: m.user.email,
+    role: m.role,
+    contributionScore: m.contributionScore,
+    cards: cardCountsByUser.get(m.userId) ?? { mvp: 0, y: 0, r: 0 },
+    meetingsCount: meetingCountsByUser.get(m.userId) ?? 0,
+    commitsCount: commitsByUser.get(m.userId) ?? 0,
+  }));
+
+  const meetings = matchReports.map((r) => {
+    const top = r.memberReports[0];
+    return {
+      id: r.id,
+      createdAt: r.createdAt,
+      meetingAt: r.transcript?.meetingAt ?? null,
+      title: r.transcript?.title ?? null,
+      summary: r.summary,
+      topScorer: top
+        ? {
+            name: top.user.name ?? top.user.email,
+            score: top.contributionScore,
+          }
+        : null,
+    };
+  });
+
+  const now = Date.now();
+  const commitmentRows = commitments.map((c) => ({
+    id: c.id,
+    title: c.title,
+    assignedTo: c.assignedTo,
+    targetDate: c.targetDate as Date,
+    overdue: (c.targetDate as Date).getTime() < now,
+  }));
+
+  const deadlineMs = project.deadline?.getTime() ?? null;
+  const daysToDeadline =
+    deadlineMs === null
+      ? null
+      : Math.ceil((deadlineMs - now) / (1000 * 60 * 60 * 24));
+
+  return {
+    project,
+    health,
+    daysToDeadline,
+    githubConnected,
+    members: memberRows,
+    meetings,
+    commitments: commitmentRows,
+    decisions,
+    counts: {
+      members: project.members.length,
+      meetings: matchReports.length,
+      commitments: commitmentRows.length,
+      cards: allCards.length,
+    },
+  };
 }

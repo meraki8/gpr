@@ -19,6 +19,18 @@ import {
 } from "@/lib/kb";
 import { CAPABILITIES, resolveCapability } from "@/lib/capabilities";
 import { recomputeMemberScores } from "@/lib/scoring";
+import { renderContractPdf } from "@/lib/contract-pdf";
+import { put } from "@vercel/blob";
+import { recordProjectHealthSnapshot } from "@/lib/health";
+import {
+  NOTIFICATION_TYPES,
+  cardNotificationBody,
+  notifyUsers,
+} from "@/lib/notifications";
+import {
+  detectTranscriptFormat,
+  transcriptFormatPromptContext,
+} from "@/lib/transcript-format";
 
 const InviteSchema = z.object({
   projectId: z.string().min(1),
@@ -111,6 +123,31 @@ export async function inviteMember(formData: FormData) {
     projectBrief: project.brief,
     inviteUrl: `${getBaseUrl()}/invite/${token}`,
   });
+
+  // If the invitee already has an account, drop a bell notification
+  // so they see it next time they're in GPR. Best-effort.
+  if (existingUser) {
+    try {
+      const groupRecord = await db.group.findUnique({
+        where: { id: project.groupId },
+        select: { name: true },
+      });
+      await notifyUsers([
+        {
+          userId: existingUser.id,
+          projectId,
+          type: NOTIFICATION_TYPES.INVITE,
+          title: `${user.name ?? user.email} invited you to ${project.name}`,
+          body: groupRecord
+            ? `Project lives in ${groupRecord.name}.`
+            : project.brief.slice(0, 200),
+          linkUrl: `/invite/${token}`,
+        },
+      ]);
+    } catch (err) {
+      console.error("[notifications] invite create failed:", err);
+    }
+  }
 
   revalidatePath(`/projects/${projectId}`);
 }
@@ -359,6 +396,11 @@ export async function analyzeTranscript(formData: FormData) {
   }
 
   // 1. Save raw transcript first so it's persisted even if AI fails.
+  // Detected platform format (discord/slack/zoom/etc.) is recorded
+  // on the transcript itself so the archive, the match report, and
+  // any KB entries that come out of analysis can render the same
+  // badge without re-running detection.
+  const sourceFormat = detectTranscriptFormat(rawText);
   const transcript = await db.transcript.create({
     data: {
       projectId,
@@ -367,6 +409,7 @@ export async function analyzeTranscript(formData: FormData) {
       title: title ?? null,
       meetingAt,
       source: file ? "FILE" : "PASTE",
+      sourceFormat,
     },
   });
 
@@ -387,6 +430,8 @@ export async function analyzeTranscript(formData: FormData) {
   const instructions = [
     "You are GPR, an AI referee for group projects. Your job is to read meeting transcripts and produce honest, structured Match Reports that hold members accountable based on what they actually did and said.",
     "",
+    `SOURCE FORMAT (auto-detected: ${sourceFormat}): ${transcriptFormatPromptContext(sourceFormat)}`,
+    "",
     "RULES:",
     "- Use the EXACT userId values from the members list below. Do not invent userIds.",
     "- Be honest. Don't sugarcoat. Don't fabricate. If a member did not speak, say so.",
@@ -399,9 +444,14 @@ export async function analyzeTranscript(formData: FormData) {
     "  * MVP: clearly carrying the team this session",
     "- A meeting can produce zero cards. That's fine. Don't force them.",
     "- summary: 1-3 sentences capturing the meeting's overall outcome and team health.",
-    "- key_knowledge: 3-5 durable facts from THIS meeting worth saving to the project knowledge base. Decisions, scope changes, owned commitments, blockers. Skip social chatter and anything already covered in 'PROJECT KNOWLEDGE' below — don't restate prior context.",
-    "  * assigned_to: name of the person responsible if the transcript clearly assigns it (use the speaker's name as it appears). Null when no clear owner.",
-    "  * target_date_iso: ISO date (YYYY-MM-DD) of the deadline if mentioned. Resolve relative dates ('Friday', 'next Tuesday', 'EOD Wednesday') against the meeting time given above. Null when no date is mentioned.",
+    "- key_knowledge: durable facts from THIS meeting worth saving to the project knowledge base. Aim for breadth — typically 5-15 entries for a normal-length meeting, more if the transcript is rich. Skip social chatter and anything already covered in 'PROJECT KNOWLEDGE' below — don't restate prior context.",
+    "  * Threshold: if someone said they will DO, BRING, HANDLE, BUY, BOOK, SET UP, CHECK, FOLLOW UP ON, or BE RESPONSIBLE FOR something — extract it. Don't gate on formality. Casual chat counts: 'I'll bring the hotspot', 'I can grab snacks', 'I'll DM Aiden', 'I got the Figma' are all valid entries.",
+    "  * Capture logistics decisions explicitly: venue, time, equipment, who is bringing or owning what physical/digital item. These matter even when phrased casually.",
+    "  * Capture decisions and scope changes (we're using X library, we're cutting feature Y, deadline moved to Z).",
+    "  * Capture blockers and dependencies (waiting on A, B is broken, C requires D first).",
+    "  * One commitment per entry — don't bundle. If three people each agreed to bring something, that's three entries.",
+    "  * assigned_to: name of the person responsible if the transcript assigns it (use the speaker's name as it appears, or the named owner). Null only when truly no owner is identified.",
+    "  * target_date_iso: ISO date (YYYY-MM-DD) of the deadline if mentioned. Resolve relative dates ('Friday', 'next Tuesday', 'EOD Wednesday', 'tomorrow') against the meeting time given above. Null when no date is mentioned.",
     "",
     "PROJECT:",
     `Name: ${project.name}`,
@@ -491,6 +541,7 @@ export async function analyzeTranscript(formData: FormData) {
           return {
             projectId,
             source: KB_SOURCES.TRANSCRIPT,
+            sourceFormat,
             title: k.title,
             content: k.content,
             // Per-entry deterministic ref so repeat analyses on the same
@@ -507,6 +558,39 @@ export async function analyzeTranscript(formData: FormData) {
     }
   }
 
+  // 6.5. Notifications. Each carded member gets a card notification;
+  // every project member gets a "new match report" notification with
+  // a link to the report. Best-effort — wrapped so a failure here
+  // never rolls back the analysis the user just paid for.
+  try {
+    const reportLink = `/projects/${projectId}/reports/${matchReport.id}`;
+    const cardRows = analysis.cards.map((c) => {
+      const copy = cardNotificationBody(c.card_type, project.name, c.reason);
+      return {
+        userId: c.user_id,
+        projectId,
+        type: NOTIFICATION_TYPES.CARD,
+        title: copy.title,
+        body: copy.body,
+        linkUrl: reportLink,
+      };
+    });
+    const reportRows = project.members.map((m) => ({
+      userId: m.user.id,
+      projectId,
+      type: NOTIFICATION_TYPES.REPORT,
+      title: `New match report in ${project.name}`,
+      body:
+        analysis.summary.length > 200
+          ? `${analysis.summary.slice(0, 197)}…`
+          : analysis.summary,
+      linkUrl: reportLink,
+    }));
+    await notifyUsers([...cardRows, ...reportRows]);
+  } catch (err) {
+    console.error("[notifications] analysis fan-out failed:", err);
+  }
+
   // 7. Recompute cumulative scores now that this report's
   // MemberReports + cards exist. Best-effort — a failure shouldn't
   // roll back the analysis.
@@ -516,6 +600,18 @@ export async function analyzeTranscript(formData: FormData) {
     console.error("Failed to recompute member scores:", err);
   }
 
+  // 8. Snapshot the project health score against this report so the
+  // overview can show "X since last meeting".
+  try {
+    await recordProjectHealthSnapshot(
+      projectId,
+      "transcript analysis",
+      matchReport.id,
+    );
+  } catch (err) {
+    console.error("Failed to snapshot project health:", err);
+  }
+
   revalidatePath(`/projects/${projectId}`);
   revalidatePath(`/projects/${projectId}/kb`);
   revalidatePath(`/projects/${projectId}/transcripts`);
@@ -523,4 +619,194 @@ export async function analyzeTranscript(formData: FormData) {
   revalidatePath(`/projects/${projectId}/leaderboard`);
   revalidatePath(`/projects/${projectId}/members`);
   redirect(`/projects/${projectId}/reports/${matchReport.id}`);
+}
+
+export async function generateContract(projectId: string) {
+  const user = await requireDbUser();
+
+  // Only project owner can generate the contract
+  const project = await db.project.findFirst({
+    where: {
+      id: projectId,
+      deletedAt: null,
+      members: { some: { userId: user.id, role: "OWNER" } },
+    },
+    include: {
+      members: {
+        include: { user: { select: { id: true, name: true, email: true } } },
+      },
+    },
+  });
+  if (!project) throw new Error("FORBIDDEN");
+
+  const memberList = project.members
+    .map((m) => {
+      const name = m.user.name ?? m.user.email;
+      return `- ${name} (${m.role})`;
+    })
+    .join("\n");
+
+  const deadlineStr = project.deadline
+    ? project.deadline.toDateString()
+    : "No fixed deadline";
+
+  const response = await ai.responses.create({
+    model: AI_MODEL,
+    instructions: `You are GPR — Group Project Referee. Generate a professional group project accountability contract.
+The contract must be clear, firm, and specific to the project details provided.
+Structure it with these sections:
+1. Project Overview
+2. Member Responsibilities (one clause per member)
+3. Deadlines and Deliverables
+4. Accountability Rules (what constitutes a yellow card, red card)
+5. Agreement
+
+Use plain text with clear section headings. Do not use markdown. Keep it under 600 words.`,
+    input: `Project name: ${project.name}
+Project brief: ${project.brief}
+Deadline: ${deadlineStr}
+Members:
+${memberList}`,
+  });
+
+  const content = response.output_text?.trim();
+  if (!content) throw new Error("AI did not return contract content");
+
+  await db.contract.upsert({
+    where: { projectId },
+    create: { projectId, content, updatedAt: new Date() },
+    update: { content, updatedAt: new Date() },
+  });
+
+  revalidatePath(`/projects/${projectId}/contract`);
+}
+
+export async function updateContract(projectId: string, content: string) {
+  const user = await requireDbUser();
+
+  const project = await db.project.findFirst({
+    where: {
+      id: projectId,
+      deletedAt: null,
+      members: { some: { userId: user.id, role: "OWNER" } },
+    },
+  });
+  if (!project) throw new Error("FORBIDDEN");
+
+  if (!content.trim()) throw new Error("Contract content cannot be empty");
+
+  await db.contract.update({
+    where: { projectId },
+    data: { content: content.trim(), updatedAt: new Date() },
+  });
+
+  revalidatePath(`/projects/${projectId}/contract`);
+}
+
+export async function signContract(projectId: string, typedName: string) {
+  const user = await requireDbUser();
+
+  if (!typedName.trim()) throw new Error("Please type your name to sign");
+
+  const contract = await db.contract.findUnique({
+    where: { projectId },
+    include: {
+      project: {
+        include: { members: { where: { userId: user.id } } },
+      },
+    },
+  });
+
+  if (!contract) throw new Error("No contract found for this project");
+  if (contract.project.members.length === 0) throw new Error("FORBIDDEN");
+
+  const alreadySigned = await db.contractSignature.findUnique({
+    where: { contractId_userId: { contractId: contract.id, userId: user.id } },
+  });
+  if (alreadySigned) throw new Error("You have already signed this contract");
+
+  await db.contractSignature.create({
+    data: {
+      contractId: contract.id,
+      userId: user.id,
+    },
+  });
+
+  revalidatePath(`/projects/${projectId}/contract`);
+}
+
+export async function generateContractPdf(projectId: string) {
+  const user = await requireDbUser();
+
+  const contract = await db.contract.findUnique({
+    where: { projectId },
+    include: {
+      project: {
+        include: {
+          members: {
+            include: {
+              user: { select: { id: true, name: true, email: true } },
+            },
+          },
+        },
+      },
+      signatures: {
+        include: {
+          user: { select: { id: true, name: true, email: true } },
+        },
+      },
+    },
+  });
+
+  if (!contract) throw new Error("No contract found");
+
+  const isMember = contract.project.members.some((m) => m.userId === user.id);
+  if (!isMember) throw new Error("FORBIDDEN");
+
+  const members = contract.project.members.map((m) => ({
+    userId: m.userId,
+    name: m.user.name ?? m.user.email,
+    role: m.role,
+  }));
+
+  const signatures = contract.signatures.map((s) => ({
+    userId: s.userId,
+    userName: s.user.name ?? s.user.email,
+    signedAt: s.signedAt.toISOString(),
+  }));
+
+  const deadline = contract.project.deadline
+    ? contract.project.deadline.toLocaleDateString("en-GB", {
+        day: "numeric",
+        month: "short",
+        year: "numeric",
+      })
+    : null;
+
+  const pdfBuffer = await renderContractPdf({
+    projectName: contract.project.name,
+    deadline,
+    content: contract.content,
+    members,
+    signatures,
+    generatedAt: new Date().toLocaleDateString("en-GB", {
+      day: "numeric",
+      month: "short",
+      year: "numeric",
+    }),
+  });
+
+  const filename = `contracts/${projectId}/contract-${Date.now()}.pdf`;
+  const blob = await put(filename, pdfBuffer, {
+    access: "private",
+    contentType: "application/pdf",
+  });
+
+  await db.contract.update({
+    where: { projectId },
+    data: { pdfUrl: blob.url, updatedAt: new Date() },
+  });
+
+  revalidatePath(`/projects/${projectId}/contract`);
+  return blob.url;
 }

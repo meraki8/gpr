@@ -20,6 +20,9 @@ type KbInput = {
   content: string;
   sourceRefId?: string | null;
   sourceTypeLabel?: string | null;
+  // Optional secondary tag — for transcript-derived entries this is
+  // the parent transcript's detected platform (discord, slack, …).
+  sourceFormat?: string | null;
   assignedTo?: string | null;
   targetDate?: Date | null;
 };
@@ -31,6 +34,7 @@ export async function addKnowledgeEntry(input: KbInput, client: DbLike = db) {
     data: {
       projectId: input.projectId,
       source: input.source,
+      sourceFormat: input.sourceFormat ?? null,
       title: input.title.slice(0, 280),
       content: input.content,
       sourceRefId: input.sourceRefId ?? null,
@@ -53,6 +57,7 @@ export async function addKnowledgeEntries(
     data: entries.map((e) => ({
       projectId: e.projectId,
       source: e.source,
+      sourceFormat: e.sourceFormat ?? null,
       title: e.title.slice(0, 280),
       content: e.content,
       sourceRefId: e.sourceRefId ?? null,

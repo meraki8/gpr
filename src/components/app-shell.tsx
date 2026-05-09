@@ -7,6 +7,7 @@ import { UserButton } from "@clerk/nextjs";
 import {
   BookOpen,
   ChevronDown,
+  FileBarChart,
   FileText,
   Flag,
   GitBranch,
@@ -14,6 +15,7 @@ import {
   Moon,
   PanelLeftClose,
   PanelLeftOpen,
+  ScrollText,
   SquareKanban,
   Sun,
   Trophy,
@@ -22,6 +24,7 @@ import {
 } from "lucide-react";
 import type { ReactNode } from "react";
 import { AskGprPanel } from "./ask-gpr-panel";
+import { NotificationsBell } from "./notifications-bell";
 
 type SidebarGroup = { id: string; name: string };
 type SidebarProject = {
@@ -252,6 +255,15 @@ export function AppShell({
                 collapsed={collapsed}
               />
               <SidebarItem
+                href={`/projects/${currentProject.id}/contract`}
+                label="Contract"
+                icon={<ScrollText size={16} />}
+                active={pathname.startsWith(
+                  `/projects/${currentProject.id}/contract`,
+                )}
+                collapsed={collapsed}
+              />
+              <SidebarItem
                 href={`/projects/${currentProject.id}/reports`}
                 label="Match reports"
                 icon={<Flag size={16} color={SIDEBAR_RED} />}
@@ -283,20 +295,29 @@ export function AppShell({
                 </div>
               )}
               <SidebarItem
-                href={`/projects/${currentProject.id}/sources`}
+                href={`/projects/${currentProject.id}/sources/github`}
                 label="GitHub"
                 icon={<GitBranch size={16} />}
                 active={pathname.startsWith(
-                  `/projects/${currentProject.id}/sources`,
+                  `/projects/${currentProject.id}/sources/github`,
                 )}
                 collapsed={collapsed}
               />
               <SidebarItem
-                href={`/projects/${currentProject.id}/jira`}
+                href={`/projects/${currentProject.id}/sources/jira`}
                 label="Jira"
                 icon={<SquareKanban size={16} />}
                 active={pathname.startsWith(
-                  `/projects/${currentProject.id}/jira`,
+                  `/projects/${currentProject.id}/sources/jira`,
+                )}
+                collapsed={collapsed}
+              />
+              <SidebarItem
+                href={`/projects/${currentProject.id}/report`}
+                label="Progress Report"
+                icon={<FileBarChart size={16} />}
+                active={pathname.startsWith(
+                  `/projects/${currentProject.id}/report`,
                 )}
                 collapsed={collapsed}
               />
@@ -416,6 +437,7 @@ export function AppShell({
           minHeight: "100vh",
         }}
       >
+        <NotificationsBell />
         {children}
         {/* Ask GPR is project-scoped — only mount on project pages.
             Trigger button is fixed bottom-right; panel slides in from

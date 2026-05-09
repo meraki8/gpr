@@ -2,9 +2,16 @@
 
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport, type UIMessage } from "ai";
-import { Bot, ChevronDown, Send, X } from "lucide-react";
+import { Bot, ChevronDown, RotateCcw, Send, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
+import {
+  clearAskSession,
+  loadAskSession,
+  saveAskSession,
+  type StoredMessage,
+  type StoredSession,
+} from "@/lib/ask-session";
 
 type KbEntry = {
   id: string;
@@ -12,6 +19,35 @@ type KbEntry = {
   sourceTypeLabel: string | null;
   title: string;
 };
+
+// Convert stored flat-content messages back into the AI SDK's
+// UIMessage shape (parts-based) for hydration.
+function hydrateMessages(stored: StoredMessage[]): UIMessage[] {
+  return stored
+    .filter((m) => m.role === "user" || m.role === "assistant")
+    .map<UIMessage>((m) => ({
+      id: m.id,
+      role: m.role,
+      parts: [{ type: "text", text: m.content }],
+    }));
+}
+
+// Flatten UIMessage parts back to a single content string for
+// storage. Multiple text parts are concatenated; non-text parts are
+// dropped (Ask GPR is text-only today).
+function dehydrateMessages(messages: UIMessage[]): StoredMessage[] {
+  const now = new Date().toISOString();
+  return messages
+    .filter((m) => m.role === "user" || m.role === "assistant")
+    .map<StoredMessage>((m) => ({
+      id: m.id,
+      role: m.role as "user" | "assistant",
+      content: m.parts
+        .map((p) => (p.type === "text" ? p.text : ""))
+        .join(""),
+      timestamp: now,
+    }));
+}
 
 const SUGGESTIONS = [
   "What did we decide last meeting?",
@@ -37,6 +73,37 @@ export function AskGprPanel({
 }) {
   const [open, setOpen] = useState(false);
   const [kbEntries, setKbEntries] = useState<KbEntry[] | null>(null);
+  const [confirmingClear, setConfirmingClear] = useState(false);
+
+  // Lazy-init from localStorage so the very first render of useChat
+  // already has the prior session's messages — avoids a flash of the
+  // empty state on refresh.
+  const initialSessionRef = useRef<StoredSession | null>(null);
+  if (initialSessionRef.current === null) {
+    initialSessionRef.current = loadAskSession(projectId);
+  }
+  const sessionRef = useRef<StoredSession | null>(initialSessionRef.current);
+
+  const { messages, sendMessage, setMessages, status, error } = useChat({
+    id: `ask-${projectId}`,
+    transport: new DefaultChatTransport({
+      api: `/api/projects/${projectId}/ask`,
+    }),
+    messages: initialSessionRef.current
+      ? hydrateMessages(initialSessionRef.current.messages)
+      : undefined,
+  });
+
+  // Persist messages to localStorage whenever they change. Skip the
+  // empty-array case so we don't clobber a freshly-cleared session.
+  useEffect(() => {
+    if (messages.length === 0) return;
+    sessionRef.current = saveAskSession(
+      projectId,
+      dehydrateMessages(messages),
+      sessionRef.current,
+    );
+  }, [messages, projectId]);
 
   // Lazy-load the slim KB list the first time the panel opens — used
   // to resolve [KB-N] citations back to titles + source colors.
@@ -57,15 +124,21 @@ export function AskGprPanel({
     };
   }, [open, projectId, kbEntries]);
 
-  // Esc to close.
+  // Esc to close — also dismiss an open confirm without closing the
+  // panel itself, so a stray Esc doesn't silently nuke the chat.
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
+      if (e.key !== "Escape") return;
+      if (confirmingClear) {
+        setConfirmingClear(false);
+      } else {
+        setOpen(false);
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [open]);
+  }, [open, confirmingClear]);
 
   // Other components on the page (e.g. the overview Quick Actions
   // bar) can ask the panel to open by dispatching gpr:open-ask.
@@ -74,6 +147,15 @@ export function AskGprPanel({
     window.addEventListener("gpr:open-ask", onOpen);
     return () => window.removeEventListener("gpr:open-ask", onOpen);
   }, []);
+
+  const handleClearChat = useCallback(() => {
+    clearAskSession(projectId);
+    sessionRef.current = null;
+    setMessages([]);
+    setConfirmingClear(false);
+  }, [projectId, setMessages]);
+
+  const hasMessages = messages.length > 0;
 
   return (
     <>
@@ -132,12 +214,23 @@ export function AskGprPanel({
         <PanelHeader
           projectName={projectName}
           kbCount={kbEntries?.length ?? 0}
+          canClear={hasMessages}
+          onNewChat={() => setConfirmingClear(true)}
           onClose={() => setOpen(false)}
         />
+        {confirmingClear && (
+          <ConfirmClearBanner
+            onCancel={() => setConfirmingClear(false)}
+            onConfirm={handleClearChat}
+          />
+        )}
         {open && (
           <ChatBody
-            projectId={projectId}
             kbEntries={kbEntries ?? []}
+            messages={messages}
+            sendMessage={sendMessage}
+            status={status}
+            error={error}
           />
         )}
       </aside>
@@ -145,15 +238,100 @@ export function AskGprPanel({
   );
 }
 
+function ConfirmClearBanner({
+  onCancel,
+  onConfirm,
+}: {
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <div
+      role="alertdialog"
+      aria-label="Confirm clear chat"
+      style={{
+        padding: "12px 16px",
+        borderBottom: "1px solid var(--line)",
+        background: "var(--paper)",
+        display: "flex",
+        flexDirection: "column",
+        gap: 10,
+      }}
+    >
+      <div style={{ fontSize: 13, color: "var(--ink)" }}>
+        Start a new chat? This will clear the current conversation.
+      </div>
+      <div
+        style={{
+          display: "flex",
+          gap: 8,
+          justifyContent: "flex-end",
+        }}
+      >
+        <button
+          type="button"
+          onClick={onCancel}
+          style={{
+            fontSize: 12,
+            padding: "6px 12px",
+            border: "1px solid var(--line)",
+            background: "transparent",
+            borderRadius: 6,
+            color: "var(--ink)",
+            cursor: "pointer",
+            fontFamily: "inherit",
+          }}
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          onClick={onConfirm}
+          autoFocus
+          style={{
+            fontSize: 12,
+            padding: "6px 12px",
+            border: 0,
+            background: "var(--red)",
+            borderRadius: 6,
+            color: "#fff",
+            cursor: "pointer",
+            fontFamily: "inherit",
+            fontWeight: 500,
+          }}
+        >
+          Clear chat
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function PanelHeader({
   projectName,
   kbCount,
+  canClear,
+  onNewChat,
   onClose,
 }: {
   projectName: string;
   kbCount: number;
+  canClear: boolean;
+  onNewChat: () => void;
   onClose: () => void;
 }) {
+  const iconBtn: React.CSSProperties = {
+    width: 30,
+    height: 30,
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    background: "transparent",
+    border: 0,
+    color: "var(--mute)",
+    cursor: "pointer",
+    borderRadius: 4,
+  };
   return (
     <div
       style={{
@@ -205,20 +383,23 @@ function PanelHeader({
       </div>
       <button
         type="button"
+        onClick={onNewChat}
+        disabled={!canClear}
+        aria-label="New chat"
+        title="New chat"
+        style={{
+          ...iconBtn,
+          opacity: canClear ? 1 : 0.35,
+          cursor: canClear ? "pointer" : "not-allowed",
+        }}
+      >
+        <RotateCcw size={14} />
+      </button>
+      <button
+        type="button"
         onClick={onClose}
         aria-label="Close"
-        style={{
-          width: 30,
-          height: 30,
-          display: "inline-flex",
-          alignItems: "center",
-          justifyContent: "center",
-          background: "transparent",
-          border: 0,
-          color: "var(--mute)",
-          cursor: "pointer",
-          borderRadius: 4,
-        }}
+        style={iconBtn}
       >
         <X size={16} />
       </button>
@@ -226,19 +407,22 @@ function PanelHeader({
   );
 }
 
+type ChatHelpers = ReturnType<typeof useChat>;
+
 function ChatBody({
-  projectId,
   kbEntries,
+  messages,
+  sendMessage,
+  status,
+  error,
 }: {
-  projectId: string;
   kbEntries: KbEntry[];
+  messages: ChatHelpers["messages"];
+  sendMessage: ChatHelpers["sendMessage"];
+  status: ChatHelpers["status"];
+  error: ChatHelpers["error"];
 }) {
   const [input, setInput] = useState("");
-  const { messages, sendMessage, status, error } = useChat({
-    transport: new DefaultChatTransport({
-      api: `/api/projects/${projectId}/ask`,
-    }),
-  });
 
   const scrollerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
