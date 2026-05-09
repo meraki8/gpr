@@ -71,8 +71,8 @@ export async function getMyProjects() {
       _count: {
         select: {
           members: true,
-          cards: { where: { status: "APPROVED" } },
-          matchReports: { where: { status: "PUBLISHED" } },
+          cards: true,
+          matchReports: true,
         },
       },
     },
@@ -147,7 +147,6 @@ export async function getProject(projectId: string) {
         },
       },
       cards: {
-        where: { status: "APPROVED" },
         orderBy: { createdAt: "desc" },
         take: 8,
         include: { user: true },
@@ -311,7 +310,7 @@ export async function getProjectTranscripts(projectId: string) {
         orderBy: [{ meetingAt: "desc" }, { createdAt: "desc" }],
         include: {
           uploader: true,
-          matchReports: { select: { id: true, status: true } },
+          matchReports: { select: { id: true } },
         },
       },
       members: {
@@ -405,11 +404,10 @@ export async function getProjectReportsList(projectId: string) {
   });
   if (!project) notFound();
   const isOwner = project.members[0]?.role === "OWNER";
-  // Members never see drafts — only owners get to review them.
-  const visibleReports = isOwner
-    ? project.matchReports
-    : project.matchReports.filter((r) => r.status === "PUBLISHED");
-  return { project, isOwner, reports: visibleReports };
+  // Reports are final the moment the AI returns them — everyone on
+  // the project sees every report. isOwner is still surfaced for the
+  // role indicator on the page.
+  return { project, isOwner, reports: project.matchReports };
 }
 
 export async function getProjectKb(projectId: string) {
@@ -486,18 +484,8 @@ export async function getMatchReport(reportId: string) {
     },
   });
   if (!report) notFound();
-
   const isOwner = report.project.members[0]?.role === "OWNER";
-
-  // Members can view draft reports — the analysis was opened up to
-  // anyone with the run_analysis capability, and 404'ing the runner
-  // immediately after a successful run was the bug. Non-owners
-  // still only see approved cards (drafts of cards stay owner-only),
-  // and the report page hides approve/dismiss/publish actions for
-  // non-owners.
-  const visibleCards = isOwner
-    ? report.cards
-    : report.cards.filter((c) => c.status === "APPROVED");
-
-  return { ...report, cards: visibleCards, isOwner };
+  // The AI is the ref — every card is final, every report is final.
+  // Anyone on the project sees everything.
+  return { ...report, isOwner };
 }

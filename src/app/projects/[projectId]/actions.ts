@@ -394,7 +394,6 @@ export async function analyzeTranscript(formData: FormData) {
       summary: analysis.summary,
       periodStart: reportPeriod,
       periodEnd: reportPeriod,
-      status: "DRAFT",
       memberReports: {
         create: analysis.members.map((m) => ({
           userId: m.user_id,
@@ -411,7 +410,6 @@ export async function analyzeTranscript(formData: FormData) {
           cardType: c.card_type,
           reason: c.reason,
           evidenceJson: { quotes: c.evidence_quotes },
-          status: "DRAFT",
           aiGenerated: true,
         })),
       },

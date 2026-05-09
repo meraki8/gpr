@@ -110,7 +110,21 @@ export default async function TranscriptsPage({
                 <span>Report</span>
                 <span />
               </div>
-              {project.transcripts.map((t, i) => {
+              {project.transcripts.map(
+                (
+                  t: {
+                    id: string;
+                    title: string | null;
+                    meetingAt: Date | null;
+                    createdAt: Date;
+                    rawText: string;
+                    source: string;
+                    kbEntryCount: number;
+                    uploader: { name: string | null; email: string };
+                    matchReports: { id: string }[];
+                  },
+                  i: number,
+                ) => {
                 const report = t.matchReports[0];
                 const when = t.meetingAt ?? t.createdAt;
                 const fallbackTitle = `Meeting · ${when.toLocaleDateString(undefined, { month: "short", day: "numeric" })}`;
@@ -212,7 +226,7 @@ export default async function TranscriptsPage({
                           className="lk-mute"
                           style={{ fontSize: 13 }}
                         >
-                          {report.status === "DRAFT" ? "Draft" : "View"}
+                          View
                         </Link>
                       ) : (
                         <span
