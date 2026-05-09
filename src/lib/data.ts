@@ -52,7 +52,9 @@ export async function getProject(projectId: string) {
       group: true,
       members: {
         include: { user: true },
-        orderBy: { joinedAt: "asc" },
+        // Leaderboard order: highest contribution first, ties broken by
+        // earliest joiner (rewards continuity).
+        orderBy: [{ contributionScore: "desc" }, { joinedAt: "asc" }],
       },
       matchReports: {
         orderBy: { createdAt: "desc" },
@@ -60,6 +62,12 @@ export async function getProject(projectId: string) {
         include: {
           _count: { select: { cards: true, memberReports: true } },
         },
+      },
+      cards: {
+        where: { status: "APPROVED" },
+        orderBy: { createdAt: "desc" },
+        take: 8,
+        include: { user: true },
       },
     },
   });

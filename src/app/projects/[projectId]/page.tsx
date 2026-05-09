@@ -78,33 +78,45 @@ export default async function ProjectPage({
         </div>
 
         <h2 className="text-sm font-mono uppercase tracking-widest text-white/60 mb-4">
-          Members
+          Leaderboard
         </h2>
         <ul className="grid gap-2 mb-12">
-          {project.members.map((m) => (
+          {project.members.map((m, i) => (
             <li
               key={m.id}
-              className="flex items-center justify-between border border-white/10 px-4 py-3"
+              className={`flex items-center gap-4 border px-4 py-3 ${
+                i === 0 && m.contributionScore > 0
+                  ? "bg-[#DC2626]/5 border-[#DC2626]/40"
+                  : "border-white/10"
+              }`}
             >
-              <div>
-                <div className="font-medium">
+              <div
+                className={`font-mono text-2xl font-black w-8 text-center shrink-0 ${
+                  i === 0 && m.contributionScore > 0
+                    ? "text-[#DC2626]"
+                    : "text-white/30"
+                }`}
+              >
+                {i + 1}
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="font-medium truncate">
                   {m.user.name ?? m.user.email}
                 </div>
-                <div className="text-xs font-mono text-white/40">
-                  {m.user.email}
+                <div className="text-xs font-mono text-white/40 truncate">
+                  {m.role.toLowerCase()} · {m.user.email}
                 </div>
               </div>
-              <div className="flex items-center gap-3">
-                <span className="text-xs font-mono uppercase tracking-widest text-white/50">
-                  {m.role}
-                </span>
-                <span className="font-mono text-sm">
-                  {m.contributionScore}
-                </span>
+              <div className="font-mono text-3xl font-black text-[#DC2626] tabular-nums shrink-0">
+                {m.contributionScore}
               </div>
             </li>
           ))}
         </ul>
+        <p className="text-xs text-white/40 mb-12 font-mono -mt-10">
+          Scores are the average across all published Match Reports. Publish a
+          report to update the leaderboard.
+        </p>
 
         <div className="border-t border-white/10 pt-8 mb-12">
           <h2 className="text-sm font-mono uppercase tracking-widest text-white/60 mb-4">
@@ -198,6 +210,56 @@ export default async function ProjectPage({
               ))}
             </ul>
           )}
+        </div>
+
+        {project.cards.length > 0 && (
+          <div className="border-t border-white/10 pt-8 mt-12">
+            <h2 className="text-sm font-mono uppercase tracking-widest text-white/60 mb-4">
+              Recent cards
+            </h2>
+            <ul className="grid gap-2">
+              {project.cards.map((card) => {
+                const cardClass =
+                  card.cardType === "RED"
+                    ? "border-l-[#DC2626]"
+                    : card.cardType === "MVP"
+                      ? "border-l-white"
+                      : "border-l-yellow-400";
+                return (
+                  <li
+                    key={card.id}
+                    className={`border border-white/10 border-l-4 ${cardClass} bg-white/5 px-4 py-3`}
+                  >
+                    <div className="flex items-baseline justify-between mb-1 gap-3 flex-wrap">
+                      <div className="font-medium">
+                        {card.user.name ?? card.user.email}
+                      </div>
+                      <div className="text-xs font-mono uppercase tracking-widest text-white/40">
+                        {card.cardType} ·{" "}
+                        {card.createdAt.toLocaleDateString()}
+                      </div>
+                    </div>
+                    <p className="text-sm text-white/70">{card.reason}</p>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        )}
+
+        <div className="border-t border-white/10 pt-8 mt-12">
+          <h2 className="text-sm font-mono uppercase tracking-widest text-white/60 mb-4">
+            Sprint progress
+          </h2>
+          <div className="border border-dashed border-white/20 px-6 py-12 text-center">
+            <p className="font-mono text-xs tracking-[0.3em] uppercase text-white/40 mb-2">
+              Phase 7
+            </p>
+            <p className="text-white/60">
+              GitHub commits &amp; PRs feed in here once a contribution
+              source is connected.
+            </p>
+          </div>
         </div>
       </section>
     </main>

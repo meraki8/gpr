@@ -105,12 +105,57 @@ export async function publishReport(formData: FormData) {
   if (!report) throw new Error("FORBIDDEN");
   if (report.status === "PUBLISHED") return;
 
-  await db.matchReport.update({
-    where: { id: report.id },
-    data: {
-      status: "PUBLISHED",
-      publishedAt: new Date(),
-    },
+  // Aggregate per-member average score across all PUBLISHED reports
+  // (including the one we're about to publish).
+  await db.$transaction(async (tx) => {
+    await tx.matchReport.update({
+      where: { id: report.id },
+      data: { status: "PUBLISHED", publishedAt: new Date() },
+    });
+
+    const aggregated = await tx.memberReport.groupBy({
+      by: ["userId"],
+      where: {
+        matchReport: {
+          projectId: report.projectId,
+          status: "PUBLISHED",
+        },
+      },
+      _avg: { contributionScore: true },
+    });
+
+    // Reset all members to 0, then write computed averages back.
+    await tx.projectMember.updateMany({
+      where: { projectId: report.projectId },
+      data: { contributionScore: 0 },
+    });
+
+    for (const row of aggregated) {
+      const score = Math.round(row._avg.contributionScore ?? 0);
+      await tx.projectMember.update({
+        where: {
+          projectId_userId: {
+            projectId: report.projectId,
+            userId: row.userId,
+          },
+        },
+        data: { contributionScore: score },
+      });
+      await tx.scoreSnapshot.create({
+        data: {
+          projectMember: {
+            connect: {
+              projectId_userId: {
+                projectId: report.projectId,
+                userId: row.userId,
+              },
+            },
+          },
+          score,
+          reason: `Recomputed when report ${report.id} was published`,
+        },
+      });
+    }
   });
 
   revalidatePath(`/projects/${report.projectId}/reports/${report.id}`);
