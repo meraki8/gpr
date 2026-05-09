@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { AnimatedNumber } from "@/components/animated-number";
+import { NudgeButton } from "@/components/nudge-button";
 import { PageHead } from "@/components/page-head";
 import { RefCard } from "@/components/ref-card";
 import { requireDbUser } from "@/lib/auth";
@@ -109,11 +110,26 @@ export default async function LeaderboardPage({
             }}
           >
             {top3.length >= 2 && (
-              <PodiumCard member={top3[1]} prominence="silver" />
+              <PodiumCard
+                member={top3[1]}
+                prominence="silver"
+                projectId={board.project.id}
+                viewerId={user.id}
+              />
             )}
-            <PodiumCard member={top3[0]} prominence="gold" />
+            <PodiumCard
+              member={top3[0]}
+              prominence="gold"
+              projectId={board.project.id}
+              viewerId={user.id}
+            />
             {top3.length >= 3 && (
-              <PodiumCard member={top3[2]} prominence="bronze" />
+              <PodiumCard
+                member={top3[2]}
+                prominence="bronze"
+                projectId={board.project.id}
+                viewerId={user.id}
+              />
             )}
           </section>
         )}
@@ -125,8 +141,8 @@ export default async function LeaderboardPage({
               style={{
                 display: "grid",
                 gridTemplateColumns:
-                  "70px minmax(0, 1fr) 110px 110px 130px 90px",
-                gap: 24,
+                  "70px minmax(0, 1fr) 110px 110px 150px 110px 110px",
+                gap: 20,
                 padding: "16px 0 8px",
                 color: "var(--mute)",
                 fontSize: 11,
@@ -141,12 +157,15 @@ export default async function LeaderboardPage({
               <span style={{ textAlign: "right" }}>Trend</span>
               <span>Cards</span>
               <span style={{ textAlign: "right" }}>GitHub</span>
+              <span style={{ textAlign: "right" }} />
             </div>
             {rest.map((m, i) => (
               <StandardRow
                 key={m.id}
                 member={m}
                 animationDelay={i * 60}
+                projectId={board.project.id}
+                viewerId={user.id}
               />
             ))}
           </section>
@@ -216,9 +235,13 @@ function StatTile({
 function PodiumCard({
   member,
   prominence,
+  projectId,
+  viewerId,
 }: {
   member: Member;
   prominence: "gold" | "silver" | "bronze";
+  projectId: string;
+  viewerId: string;
 }) {
   const isGold = prominence === "gold";
   const medalColor = MEDAL_COLOR[member.rank] ?? "var(--mute)";
@@ -310,15 +333,26 @@ function PodiumCard({
           style={{
             display: "flex",
             alignItems: "center",
-            gap: 14,
-            marginTop: 12,
+            gap: 16,
+            marginTop: 14,
             flexWrap: "wrap",
           }}
         >
-          <TrendChip trend={member.trend} />
-          <CardChips counts={member.cardCounts} />
-          <GithubChip github={member.github} />
+          <TrendChip trend={member.trend} size={isGold ? "lg" : "md"} />
+          <CardChips counts={member.cardCounts} size={isGold ? "lg" : "md"} />
+          <GithubChip github={member.github} size={isGold ? "lg" : "md"} />
         </div>
+        {member.user.id !== viewerId && (
+          <div style={{ marginTop: 14 }}>
+            <NudgeButton
+              projectId={projectId}
+              recipientUserId={member.user.id}
+              recipientName={member.user.name ?? member.user.email}
+              recipientScore={member.contributionScore}
+              size={isGold ? "md" : "sm"}
+            />
+          </div>
+        )}
       </div>
     </div>
   );
@@ -327,9 +361,13 @@ function PodiumCard({
 function StandardRow({
   member,
   animationDelay,
+  projectId,
+  viewerId,
 }: {
   member: Member;
   animationDelay: number;
+  projectId: string;
+  viewerId: string;
 }) {
   return (
     <div
@@ -337,8 +375,8 @@ function StandardRow({
       style={{
         display: "grid",
         gridTemplateColumns:
-          "70px minmax(0, 1fr) 110px 110px 130px 90px",
-        gap: 24,
+          "70px minmax(0, 1fr) 110px 110px 150px 110px 110px",
+        gap: 20,
         padding: "20px 0",
         borderBottom: "1px solid var(--line)",
         alignItems: "center",
@@ -404,6 +442,24 @@ function StandardRow({
       </div>
       <CardChips counts={member.cardCounts} />
       <GithubChip github={member.github} alignRight />
+      <div style={{ display: "flex", justifyContent: "flex-end" }}>
+        {member.user.id === viewerId ? (
+          <span
+            className="mute-ink"
+            style={{ fontSize: 12, fontStyle: "italic" }}
+          >
+            you
+          </span>
+        ) : (
+          <NudgeButton
+            projectId={projectId}
+            recipientUserId={member.user.id}
+            recipientName={member.user.name ?? member.user.email}
+            recipientScore={member.contributionScore}
+            size="sm"
+          />
+        )}
+      </div>
     </div>
   );
 }
@@ -485,7 +541,9 @@ function Avatar({
   );
 }
 
-function TrendChip({ trend }: { trend: number }) {
+function TrendChip({ trend, size = "md" }: { trend: number; size?: "md" | "lg" }) {
+  const fontSize = size === "lg" ? 22 : 18;
+  const iconSize = size === "lg" ? 18 : 16;
   if (trend === 0) {
     return (
       <span
@@ -493,12 +551,13 @@ function TrendChip({ trend }: { trend: number }) {
         style={{
           display: "inline-flex",
           alignItems: "center",
-          gap: 4,
-          fontSize: 12,
+          gap: 6,
+          fontSize,
+          fontWeight: 600,
           color: "var(--mute)",
         }}
       >
-        <Minus size={12} />
+        <Minus size={iconSize} />
         <span className="num">0</span>
       </span>
     );
@@ -512,13 +571,14 @@ function TrendChip({ trend }: { trend: number }) {
       style={{
         display: "inline-flex",
         alignItems: "center",
-        gap: 4,
-        fontSize: 12,
+        gap: 6,
+        fontSize,
         color,
-        fontWeight: 500,
+        fontWeight: 700,
+        letterSpacing: "-0.01em",
       }}
     >
-      <Icon size={12} />
+      <Icon size={iconSize} strokeWidth={2.5} />
       <span className="num">
         {positive ? "+" : ""}
         {trend}
@@ -529,44 +589,82 @@ function TrendChip({ trend }: { trend: number }) {
 
 function CardChips({
   counts,
+  size = "md",
 }: {
   counts: { MVP: number; YELLOW: number; RED: number };
+  size?: "md" | "lg";
 }) {
-  const items: Array<{
+  const order: Array<{
     key: "MVP" | "YELLOW" | "RED";
-    color: string;
     kind: "mvp" | "y" | "r";
   }> = [
-    { key: "MVP", color: "var(--status-good)", kind: "mvp" },
-    { key: "YELLOW", color: "var(--status-watch)", kind: "y" },
-    { key: "RED", color: "var(--red)", kind: "r" },
+    { key: "MVP", kind: "mvp" },
+    { key: "YELLOW", kind: "y" },
+    { key: "RED", kind: "r" },
   ];
-  const visible = items.filter((i) => counts[i.key] > 0);
-  if (visible.length === 0) {
+  const cardSize = size === "lg" ? 20 : 16;
+  const maxPerKind = 5;
+  const total = counts.MVP + counts.YELLOW + counts.RED;
+  if (total === 0) {
     return (
-      <span className="mute-ink" style={{ fontSize: 12 }}>
+      <span className="mute-ink" style={{ fontSize: 13 }}>
         —
       </span>
     );
   }
   return (
-    <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
-      {visible.map((i) => (
-        <span
-          key={i.key}
-          title={`${counts[i.key]} ${i.key.toLowerCase()}`}
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: 4,
-          }}
-        >
-          <RefCard kind={i.kind} size={14} />
-          <span className="num" style={{ fontSize: 12, color: i.color }}>
-            {counts[i.key]}
+    <span
+      style={{
+        display: "inline-flex",
+        gap: 6,
+        alignItems: "center",
+        flexWrap: "wrap",
+      }}
+    >
+      {order.flatMap((i) => {
+        const n = counts[i.key];
+        if (n === 0) return [];
+        const visible = Math.min(n, maxPerKind);
+        const overflow = n - visible;
+        const stack = [];
+        for (let k = 0; k < visible; k++) {
+          stack.push(
+            <RefCard
+              key={`${i.key}-${k}`}
+              kind={i.kind}
+              size={cardSize}
+            />,
+          );
+        }
+        if (overflow > 0) {
+          stack.push(
+            <span
+              key={`${i.key}-more`}
+              className="num"
+              style={{
+                fontSize: size === "lg" ? 13 : 12,
+                color: "var(--mute)",
+                fontWeight: 600,
+              }}
+            >
+              +{overflow}
+            </span>,
+          );
+        }
+        return (
+          <span
+            key={i.key}
+            title={`${n} ${i.key.toLowerCase()}`}
+            style={{
+              display: "inline-flex",
+              gap: 2,
+              alignItems: "center",
+            }}
+          >
+            {stack}
           </span>
-        </span>
-      ))}
+        );
+      })}
     </span>
   );
 }
@@ -574,16 +672,20 @@ function CardChips({
 function GithubChip({
   github,
   alignRight,
+  size = "md",
 }: {
   github: { commits: number; prs: number };
   alignRight?: boolean;
+  size?: "md" | "lg";
 }) {
+  const fontSize = size === "lg" ? 16 : 14;
+  const iconSize = size === "lg" ? 16 : 14;
   if (github.commits === 0 && github.prs === 0) {
     return (
       <span
         className="mute-ink"
         style={{
-          fontSize: 12,
+          fontSize: 13,
           textAlign: alignRight ? "right" : undefined,
           display: "block",
         }}
@@ -596,7 +698,7 @@ function GithubChip({
     <span
       style={{
         display: "inline-flex",
-        gap: 10,
+        gap: 12,
         alignItems: "center",
         justifyContent: alignRight ? "flex-end" : "flex-start",
       }}
@@ -607,12 +709,13 @@ function GithubChip({
           style={{
             display: "inline-flex",
             alignItems: "center",
-            gap: 4,
-            fontSize: 12,
-            color: "var(--ink-2)",
+            gap: 5,
+            fontSize,
+            fontWeight: 600,
+            color: "var(--ink)",
           }}
         >
-          <GitCommit size={12} />
+          <GitCommit size={iconSize} strokeWidth={2.2} />
           <span className="num">{github.commits}</span>
         </span>
       )}
@@ -622,12 +725,13 @@ function GithubChip({
           style={{
             display: "inline-flex",
             alignItems: "center",
-            gap: 4,
-            fontSize: 12,
-            color: "var(--ink-2)",
+            gap: 5,
+            fontSize,
+            fontWeight: 600,
+            color: "var(--ink)",
           }}
         >
-          <GitPullRequest size={12} />
+          <GitPullRequest size={iconSize} strokeWidth={2.2} />
           <span className="num">{github.prs}</span>
         </span>
       )}
