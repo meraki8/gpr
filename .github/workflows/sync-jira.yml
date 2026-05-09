@@ -1,8 +1,6 @@
 name: Jira sync
 
 on:
-  schedule:
-    - cron: "*/15 * * * *"   # every 15 minutes (GitHub may delay under load)
   workflow_dispatch:           # allow manual trigger from the Actions tab
 
 jobs:

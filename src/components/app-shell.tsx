@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { UserButton } from "@clerk/nextjs";
@@ -38,6 +38,9 @@ type Theme = "dark" | "light";
 
 const STORAGE_THEME = "gpr_theme";
 const STORAGE_COLLAPSED = "gpr_sidebar_collapsed";
+const PREFS_EVENT = "gpr:prefs";
+const DEFAULT_THEME: Theme = "dark";
+const DEFAULT_COLLAPSED = false;
 
 const SIDEBAR_BG = "#0a0a0a";
 const SIDEBAR_BORDER = "#1f1f1f";
@@ -49,15 +52,38 @@ const SIDEBAR_RED = "#ff3b30";
 const COLLAPSED_W = 56;
 const EXPANDED_W = 220;
 
-function initialTheme(): Theme {
-  if (typeof window === "undefined") return "dark";
+function storedTheme(): Theme {
+  if (typeof window === "undefined") return DEFAULT_THEME;
   const t = window.localStorage.getItem(STORAGE_THEME);
-  return t === "light" || t === "dark" ? t : "dark";
+  return t === "light" || t === "dark" ? t : DEFAULT_THEME;
 }
 
-function initialCollapsed(): boolean {
-  if (typeof window === "undefined") return false;
+function storedCollapsed(): boolean {
+  if (typeof window === "undefined") return DEFAULT_COLLAPSED;
   return window.localStorage.getItem(STORAGE_COLLAPSED) === "1";
+}
+
+function subscribePrefs(listener: () => void): () => void {
+  if (typeof window === "undefined") return () => {};
+  const onStorage = (event: StorageEvent) => {
+    if (
+      !event.key ||
+      event.key === STORAGE_THEME ||
+      event.key === STORAGE_COLLAPSED
+    ) {
+      listener();
+    }
+  };
+  window.addEventListener("storage", onStorage);
+  window.addEventListener(PREFS_EVENT, listener);
+  return () => {
+    window.removeEventListener("storage", onStorage);
+    window.removeEventListener(PREFS_EVENT, listener);
+  };
+}
+
+function notifyPrefsChanged() {
+  window.dispatchEvent(new Event(PREFS_EVENT));
 }
 
 export type AppShellProps = {
@@ -78,22 +104,27 @@ export function AppShell({
   children,
 }: AppShellProps) {
   const pathname = usePathname();
-  const [theme, setTheme] = useState<Theme>(initialTheme);
-  const [collapsed, setCollapsed] = useState(initialCollapsed);
+  const theme = useSyncExternalStore(
+    subscribePrefs,
+    storedTheme,
+    () => DEFAULT_THEME,
+  );
+  const collapsed = useSyncExternalStore(
+    subscribePrefs,
+    storedCollapsed,
+    () => DEFAULT_COLLAPSED,
+  );
 
-  // Hydrate persisted preferences. Brief flash possible on first load
-  // for users who chose light — acceptable; can be solved later with
-  // an inline pre-hydration script if needed.
   const toggleTheme = () => {
     const next: Theme = theme === "dark" ? "light" : "dark";
-    setTheme(next);
-    localStorage.setItem(STORAGE_THEME, next);
+    window.localStorage.setItem(STORAGE_THEME, next);
+    notifyPrefsChanged();
   };
 
   const toggleCollapsed = () => {
     const next = !collapsed;
-    setCollapsed(next);
-    localStorage.setItem(STORAGE_COLLAPSED, next ? "1" : "0");
+    window.localStorage.setItem(STORAGE_COLLAPSED, next ? "1" : "0");
+    notifyPrefsChanged();
   };
 
   return (

@@ -142,44 +142,29 @@ export default async function JiraPage({
 
         <section
           style={{
-            padding: "0 0 80px",
+            padding: "0 0 24px",
             borderBottom: "1px solid var(--line)",
           }}
         >
-          <div
-            style={{
-              display: "flex",
-              alignItems: "baseline",
-              justifyContent: "space-between",
-              marginBottom: 32,
-              gap: 14,
-              flexWrap: "wrap",
-            }}
-          >
-            <h2 className="h-m" style={{ margin: 0 }}>
-              Jira
-            </h2>
-            <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
-              {/* Sync is open to any member; Disconnect stays
-                  owner-only since it's destructive. */}
-              {isConnectedWithApi && (
-                <form action={syncJiraSource}>
-                  <input type="hidden" name="projectId" value={projectId} />
-                  <button type="submit" className="pill pill-red">
-                    Sync now →
-                  </button>
-                </form>
-              )}
-              {isOwner && jiraSource && (
-                <form action={disconnectJira}>
-                  <input type="hidden" name="projectId" value={projectId} />
-                  <button type="submit" className="lk-mute" style={{ fontSize: 12 }}>
-                    Disconnect
-                  </button>
-                </form>
-              )}
+          {isConnectedWithApi && (
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                marginBottom: 24,
+                gap: 14,
+                flexWrap: "wrap",
+              }}
+            >
+              <form action={syncJiraSource}>
+                <input type="hidden" name="projectId" value={projectId} />
+                <button type="submit" className="pill pill-red">
+                  Sync now
+                </button>
+              </form>
             </div>
-          </div>
+          )}
 
           {jiraSource?.lastSyncedAt && (
             <p className="mute-ink" style={{ fontSize: 13, marginTop: -16, marginBottom: 32 }}>
@@ -199,7 +184,7 @@ export default async function JiraPage({
             <>
               <p className="body mute-ink" style={{ marginBottom: 32, fontSize: 14 }}>
                 Connect your Jira project with an Atlassian API token. GPR pulls
-                issues directly — no Make.com setup required. Generate a token at{" "}
+                issues directly — no setup required. Generate a token at{" "}
                 <a
                   href="https://id.atlassian.com/manage-profile/security/api-tokens"
                   target="_blank"
@@ -212,7 +197,7 @@ export default async function JiraPage({
               </p>
               <form
                 action={connectJira}
-                style={{ display: "grid", gap: 14, maxWidth: 560 }}
+                style={{ display: "grid", gap: 14, maxWidth: 820 }}
               >
                 <input type="hidden" name="projectId" value={projectId} />
                 <div>
@@ -220,7 +205,7 @@ export default async function JiraPage({
                   <input
                     type="url"
                     name="jiraBaseUrl"
-                    placeholder="https://yourorg.atlassian.net"
+                    placeholder="https://yourorg.atlassian.net/jira/software/projects/yourprojectkey/boards/100"
                     defaultValue={jiraConfig?.baseUrl ?? ""}
                     required
                     className="field"
@@ -275,7 +260,14 @@ export default async function JiraPage({
           ) : (
             <>
               <div style={{ display: "grid", gap: 24, marginBottom: 48 }}>
-                <div style={{ display: "grid", gap: 14, gridTemplateColumns: "repeat(3, 1fr)" }}>
+                <div
+                  style={{
+                    display: "flex",
+                    gap: 24,
+                    alignItems: "flex-start",
+                    flexWrap: "wrap",
+                  }}
+                >
                   <div>
                     <div className="label" style={{ marginBottom: 6 }}>Project key</div>
                     <span className="num" style={{ fontSize: 15 }}>{jiraConfig?.projectKey}</span>
@@ -298,6 +290,14 @@ export default async function JiraPage({
                       {maskToken(jiraConfig?.apiToken)}
                     </span>
                   </div>
+                  {isOwner && jiraSource && (
+                    <form action={disconnectJira} style={{ marginLeft: "auto" }}>
+                      <input type="hidden" name="projectId" value={projectId} />
+                      <button type="submit" className="lk-mute" style={{ fontSize: 12 }}>
+                        Disconnect workspace
+                      </button>
+                    </form>
+                  )}
                 </div>
 
                 <div>
@@ -305,9 +305,10 @@ export default async function JiraPage({
                     Acceptance criteria format
                   </div>
                   <p className="body mute-ink" style={{ fontSize: 13, margin: 0, marginBottom: 10 }}>
-                    Add this to any Jira issue&apos;s description. When the issue moves
-                    to Done, GPR judges each criterion against GitHub code evidence.
-                    Misses become yellow cards.
+                    Put your Acceptance Criteria in the Description field of your user stories.
+                    A format like below works well. When the issue moves to Done, GPR
+                    judges each criterion against GitHub code evidence. Misses become
+                    yellow cards.
                   </p>
                   <pre
                     style={{
@@ -333,7 +334,7 @@ export default async function JiraPage({
               </div>
               <p className="body mute-ink" style={{ fontSize: 14, marginBottom: 24, marginTop: 0 }}>
                 Map each member to their Jira account ID so events get attributed correctly.
-                Find it in Jira: profile → Account ID (a long string like <code style={{ fontSize: 12 }}>abc123def456</code>).
+                Find it in Jira: profile → Account ID (a long string like <code style={{ fontSize: 12 }}>712020:7ab3afb2-5b06-42e6-89ee-9a8f619aa167</code>).
               </p>
               <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
                 {project.members.map((m) => {
@@ -346,13 +347,13 @@ export default async function JiraPage({
                       style={{
                         display: "flex",
                         alignItems: "center",
-                        gap: 16,
-                        padding: "16px 0",
+                        gap: 18,
+                        padding: "12px 0",
                         borderBottom: "1px solid var(--line-2)",
                         flexWrap: "wrap",
                       }}
                     >
-                      <div style={{ flex: 1, minWidth: 200 }}>
+                      <div style={{ width: 260, maxWidth: "100%" }}>
                         <div style={{ fontSize: 15, fontWeight: 500 }}>
                           {m.user.name ?? m.user.email}
                         </div>
@@ -374,7 +375,7 @@ export default async function JiraPage({
                             defaultValue={identity?.externalId ?? ""}
                             required
                             className="field num"
-                            style={{ width: 220, padding: "8px 12px" }}
+                            style={{ width: 360, maxWidth: "100%", padding: "8px 12px" }}
                           />
                           <button type="submit" className="pill pill-ghost pill-sm">
                             Save
@@ -391,14 +392,14 @@ export default async function JiraPage({
               </ul>
 
               {webhookUrl && (
-                <details style={{ marginTop: 56 }}>
+                <details style={{ marginTop: 14 }}>
                   <summary
                     className="lk-mute"
                     style={{ fontSize: 12, cursor: "pointer" }}
                   >
                     Advanced: Make.com webhook (legacy fallback)
                   </summary>
-                  <p className="body mute-ink" style={{ fontSize: 13, marginTop: 12 }}>
+                  <p className="body mute-ink" style={{ fontSize: 13, margin: "8px 0 0" }}>
                     Most users should ignore this — the API token connection above
                     handles everything. The webhook endpoint is here for users who
                     already have a Make.com scenario configured.
@@ -413,7 +414,7 @@ export default async function JiraPage({
                       fontSize: 12,
                       wordBreak: "break-all",
                       color: "var(--ink)",
-                      marginTop: 8,
+                      marginTop: 6,
                     }}
                   >
                     {webhookUrl}
@@ -425,7 +426,7 @@ export default async function JiraPage({
         </section>
 
         {/* Recent Jira activity */}
-        <section style={{ padding: "80px 0 0" }}>
+        <section style={{ padding: "48px 0 0" }}>
           <div
             style={{
               display: "flex",

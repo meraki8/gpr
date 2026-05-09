@@ -64,6 +64,8 @@ type JiraAutomationResult = {
   warning?: string;
 };
 
+const JIRA_PROGRESS_RECHECK_MS = 24 * 60 * 60 * 1000;
+
 function jiraConfigToAuth(config: JiraSourceConfig | null): {
   auth: JiraAuth;
   projectKey: string;
@@ -139,6 +141,56 @@ function filesToDiffEvidence(files: GhChangedFile[]): string {
     .slice(0, 18_000);
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function normalizeForDirectMatch(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim()
+    .replace(/\s+/g, " ");
+}
+
+function directJiraMatchFromDiff(
+  issues: JiraIssue[],
+  diffEvidence: string,
+): { issue: JiraIssue; confidence: number; reason: string } | null {
+  const upperDiff = diffEvidence.toUpperCase();
+  const normalizedDiff = normalizeForDirectMatch(diffEvidence);
+
+  for (const issue of issues) {
+    const keyPattern = new RegExp(
+      `(^|[^A-Z0-9])${escapeRegExp(issue.key.toUpperCase())}([^A-Z0-9]|$)`,
+    );
+    if (keyPattern.test(upperDiff)) {
+      return {
+        issue,
+        confidence: 0.98,
+        reason: `Changed file diff contains Jira key ${issue.key}.`,
+      };
+    }
+  }
+
+  for (const issue of issues) {
+    const normalizedSummary = normalizeForDirectMatch(issue.summary);
+    if (
+      normalizedSummary.length >= 20 &&
+      normalizedSummary.split(" ").length >= 3 &&
+      normalizedDiff.includes(normalizedSummary)
+    ) {
+      return {
+        issue,
+        confidence: 0.95,
+        reason: `Changed file diff contains the Jira story summary for ${issue.key}.`,
+      };
+    }
+  }
+
+  return null;
+}
+
 function jiraCandidates(issues: JiraIssue[]): string {
   return issues
     .slice(0, 80)
@@ -163,23 +215,29 @@ async function matchJiraIssueFromCode(input: {
     return { issue: null, confidence: 0, reason: "No Jira or code diff available." };
   }
 
+  const diffEvidence = filesToDiffEvidence(input.files);
+  const directMatch = directJiraMatchFromDiff(input.jira.issues, diffEvidence);
+  if (directMatch) return directMatch;
+
   const prompt = [
-    `Match a GitHub code change to the Jira user story it is implementing.`,
-    `Use ONLY the changed file paths and code patches. Do not use commit messages, PR titles, branch names, or Jira keys in text outside the code diff.`,
-    `Choose at most one Jira issue. If the code diff does not clearly correspond to any listed story, return issueKey=null and confidence=0.`,
-    `Return confidence from 0 to 1. Use >=0.65 only when the code diff strongly matches the story intent.`,
+    `Match a GitHub change to the Jira user story it is implementing.`,
+    `Use ONLY the changed file paths and diff content below. Do not use commit messages, PR titles, branch names, or Jira keys outside the diff content.`,
+    `Diff content can include source code, tests, README/Markdown, docs, config, data files, or other project files.`,
+    `A README or documentation-only change can match a Jira story if the diff content clearly describes work on that story.`,
+    `Choose at most one Jira issue. If the diff content does not clearly correspond to any listed story, return issueKey=null and confidence=0.`,
+    `Return confidence from 0 to 1. Use >=0.65 only when the changed paths or diff content strongly match the story intent.`,
     ``,
     `REPO: ${input.repo}`,
     `CHANGE: ${input.changeLabel}`,
     ``,
-    `CODE DIFF:`,
-    filesToDiffEvidence(input.files),
+    `CHANGED FILE DIFF:`,
+    diffEvidence,
     ``,
     `JIRA CANDIDATES:`,
     jiraCandidates(input.jira.issues),
     ``,
     `Respond as JSON:`,
-    `{ "issueKey": "ABC-123" | null, "confidence": 0.0, "reason": "short explanation based on code paths/patches" }`,
+    `{ "issueKey": "ABC-123" | null, "confidence": 0.0, "reason": "short explanation based on changed paths or diff content" }`,
   ].join("\n");
 
   try {
@@ -530,8 +588,13 @@ export async function syncGithubProject(
     return null;
   });
 
-  const since =
+  const lastEventSyncAt =
     source.lastSyncedAt ?? new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+  const progressRecheckSince = new Date(Date.now() - JIRA_PROGRESS_RECHECK_MS);
+  const since =
+    jira && progressRecheckSince < lastEventSyncAt
+      ? progressRecheckSince
+      : lastEventSyncAt;
 
   for (const repo of repos) {
     const [owner, name] = repo.split("/");
@@ -583,7 +646,7 @@ export async function syncGithubProject(
       summary.commits += result.count;
 
       await addKnowledgeEntries(
-        commits.map((c) => {
+        newCommits.map((c) => {
           const subject = c.commit.message.split("\n")[0].slice(0, 200);
           const body = c.commit.message.includes("\n")
             ? c.commit.message.split("\n").slice(1).join("\n").trim()
@@ -607,7 +670,27 @@ export async function syncGithubProject(
       );
     }
 
-    for (const commit of newCommits) {
+    const existingProgressEvents = await db.contributionEvent.findMany({
+      where: {
+        sourceId: source.id,
+        sourceType: "GITHUB",
+        eventType: {
+          in: ["jira_auto_in_progress", "jira_progress_transition_failed"],
+        },
+        occurredAt: { gte: progressRecheckSince },
+      },
+      select: { externalId: true },
+    });
+    const progressCheckedCommitShas = new Set(
+      existingProgressEvents
+        .map((event) => event.externalId.match(/^jira-progress:([^:]+):/)?.[1])
+        .filter((sha): sha is string => Boolean(sha)),
+    );
+    const commitsForJiraProgressCheck = commits.filter(
+      (commit) => !progressCheckedCommitShas.has(commit.sha),
+    );
+
+    for (const commit of commitsForJiraProgressCheck) {
       const userId = commit.author?.login
         ? (usernameToUserId.get(commit.author.login.toLowerCase()) ?? null)
         : null;

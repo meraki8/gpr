@@ -65,6 +65,10 @@ export async function addGithubRepo(formData: FormData) {
   const existingConfig = (existing?.configJson as GithubConfig | null) ?? {};
   const existingRepos = existingConfig.repos ?? [];
 
+  if (existingRepos.length > 0) {
+    throw new Error("Only one GitHub repo can be connected to this project");
+  }
+
   if (existingRepos.includes(repo)) {
     throw new Error("That repo is already connected");
   }
@@ -167,7 +171,39 @@ export async function setGithubAccessToken(formData: FormData) {
     });
   }
 
-  revalidatePath(`/projects/${projectId}/sources`);
+  revalidatePath(`/projects/${projectId}/sources/github`);
+}
+
+const RemoveGithubTokenSchema = z.object({
+  projectId: z.string().min(1),
+});
+
+export async function removeGithubAccessToken(formData: FormData) {
+  const user = await requireDbUser();
+  const parsed = RemoveGithubTokenSchema.safeParse({
+    projectId: formData.get("projectId"),
+  });
+  if (!parsed.success) throw new Error("Invalid input");
+
+  const { projectId } = parsed.data;
+  await requireOwner(projectId, user.id);
+
+  const source = await db.contributionSource.findUnique({
+    where: { projectId_sourceType: { projectId, sourceType: "GITHUB" } },
+  });
+  if (!source) return;
+
+  const existingConfig = (source.configJson as GithubConfig | null) ?? {};
+  const newConfig: GithubConfig = { ...existingConfig };
+  delete newConfig.accessToken;
+  delete newConfig.token;
+
+  await db.contributionSource.update({
+    where: { id: source.id },
+    data: { configJson: newConfig },
+  });
+
+  revalidatePath(`/projects/${projectId}/sources/github`);
 }
 
 const IdentitySchema = z.object({
