@@ -2,8 +2,9 @@
 
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport, type UIMessage } from "ai";
-import { Bot, Send, X } from "lucide-react";
+import { Bot, ChevronDown, Send, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import ReactMarkdown from "react-markdown";
 
 type KbEntry = {
   id: string;
@@ -251,6 +252,9 @@ function ChatBody({
     if (!text || pending) return;
     sendMessage({ text });
     setInput("");
+    // Keep focus in the textarea so the user can type the next
+    // question immediately without re-clicking.
+    inputRef.current?.focus();
   }, [input, pending, sendMessage]);
 
   return (
@@ -370,7 +374,9 @@ function ChatBody({
             fontSize: 13,
             lineHeight: 1.4,
           }}
-          disabled={pending}
+          // Intentionally not disabled while pending — disabling
+          // would yank focus and force the user to click again. The
+          // submit handler already short-circuits on pending.
         />
         <button
           type="submit"
@@ -542,11 +548,16 @@ function MessageBubble({
     );
   }
 
+  // Strip [KB-N] tags from the visible text; citations live in the
+  // collapsible Sources section below so the prose reads cleanly.
+  const cleanText = text.replace(/\s?\[KB-\d+\]/g, "").trim();
+
   return (
     <li style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
       <BotAvatar />
       <div style={{ flex: 1, minWidth: 0 }}>
         <div
+          className="chat-markdown"
           style={{
             padding: "10px 14px",
             borderRadius: 14,
@@ -556,93 +567,98 @@ function MessageBubble({
             color: "var(--ink)",
             fontSize: 13,
             lineHeight: 1.5,
-            whiteSpace: "pre-wrap",
             wordBreak: "break-word",
           }}
         >
-          <CitedText text={text} kbByIndex={kbByIndex} />
-        </div>
-        {citedIndices.length > 0 && (
-          <div
-            style={{
-              marginTop: 6,
-              display: "flex",
-              flexWrap: "wrap",
-              gap: 4,
-              paddingLeft: 4,
+          <ReactMarkdown
+            components={{
+              p: ({ children }) => (
+                <p style={{ margin: "0 0 6px" }}>{children}</p>
+              ),
+              ul: ({ children }) => (
+                <ul style={{ margin: "4px 0 6px", paddingLeft: 18 }}>
+                  {children}
+                </ul>
+              ),
+              ol: ({ children }) => (
+                <ol style={{ margin: "4px 0 6px", paddingLeft: 20 }}>
+                  {children}
+                </ol>
+              ),
+              li: ({ children }) => (
+                <li style={{ marginBottom: 2 }}>{children}</li>
+              ),
+              code: ({ children }) => (
+                <code
+                  style={{
+                    background: "var(--line-2)",
+                    padding: "1px 4px",
+                    borderRadius: 3,
+                    fontSize: 12,
+                  }}
+                >
+                  {children}
+                </code>
+              ),
+              a: ({ href, children }) => (
+                <a
+                  href={href}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{
+                    color: "var(--red)",
+                    textDecoration: "underline",
+                  }}
+                >
+                  {children}
+                </a>
+              ),
             }}
           >
-            {citedIndices.map((n) => (
-              <SourceBadge
-                key={n}
-                index={n}
-                entry={kbByIndex.get(n)}
-              />
-            ))}
-          </div>
+            {cleanText}
+          </ReactMarkdown>
+        </div>
+        {citedIndices.length > 0 && (
+          <details style={{ marginTop: 4, paddingLeft: 4 }}>
+            <summary
+              style={{
+                listStyle: "none",
+                cursor: "pointer",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 4,
+                fontSize: 11,
+                color: "var(--mute)",
+                padding: "2px 4px",
+                userSelect: "none",
+              }}
+            >
+              <ChevronDown size={11} />
+              <span>
+                {citedIndices.length} source
+                {citedIndices.length === 1 ? "" : "s"}
+              </span>
+            </summary>
+            <div
+              style={{
+                marginTop: 6,
+                display: "flex",
+                flexWrap: "wrap",
+                gap: 4,
+              }}
+            >
+              {citedIndices.map((n) => (
+                <SourceBadge
+                  key={n}
+                  index={n}
+                  entry={kbByIndex.get(n)}
+                />
+              ))}
+            </div>
+          </details>
         )}
       </div>
     </li>
-  );
-}
-
-function CitedText({
-  text,
-  kbByIndex,
-}: {
-  text: string;
-  kbByIndex: Map<number, KbEntry>;
-}) {
-  const re = /\[KB-(\d+)\]/g;
-  const parts: Array<React.ReactNode> = [];
-  let lastIndex = 0;
-  let key = 0;
-  for (const m of text.matchAll(re)) {
-    if (m.index === undefined) continue;
-    if (m.index > lastIndex) parts.push(text.slice(lastIndex, m.index));
-    const n = Number(m[1]);
-    parts.push(
-      <InlineCitation
-        key={`cite-${key++}`}
-        index={n}
-        entry={kbByIndex.get(n)}
-      />,
-    );
-    lastIndex = m.index + m[0].length;
-  }
-  if (lastIndex < text.length) parts.push(text.slice(lastIndex));
-  return <>{parts}</>;
-}
-
-function InlineCitation({
-  index,
-  entry,
-}: {
-  index: number;
-  entry: KbEntry | undefined;
-}) {
-  const color = entry
-    ? (SOURCE_BADGE_COLOR[entry.source] ?? "var(--ink)")
-    : "var(--mute-2)";
-  return (
-    <span
-      title={entry ? `${entry.source}: ${entry.title}` : `KB-${index}`}
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        padding: "1px 5px",
-        margin: "0 2px",
-        borderRadius: 3,
-        fontSize: 10,
-        fontWeight: 500,
-        color: "#fff",
-        background: color,
-        verticalAlign: "baseline",
-        whiteSpace: "nowrap",
-      }}
-    >
-      KB-{index}
-    </span>
   );
 }
 
