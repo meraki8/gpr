@@ -14,27 +14,30 @@ export const TRANSCRIPT_FORMAT = {
 export type TranscriptFormat =
   (typeof TRANSCRIPT_FORMAT)[keyof typeof TRANSCRIPT_FORMAT];
 
-// Heuristic detector. Order matters — the more distinctive patterns
-// win. Falls back to "other" when nothing matches.
+// Heuristic detector. Order matters — the most distinctive patterns
+// run first so a generic meeting transcript can't get mis-tagged as
+// Slack just because it happens to contain a "9:30 AM\nSomeone"
+// substring. Falls back to "other" when nothing matches.
 export function detectTranscriptFormat(text: string): TranscriptFormat {
   if (!text) return TRANSCRIPT_FORMAT.OTHER;
 
-  // Discord — bracketed AM/PM stamps with channel hashtags, or
-  // Discord's "Today at hh:mm" relative timestamp format.
-  if (/\[\d{1,2}:\d{2} [AP]M\]/.test(text) && text.includes("#")) {
+  // Discord — bracketed AM/PM stamps next to a real channel hashtag
+  // (#general is the canonical default), or Discord's "Today at hh:mm
+  // AM/PM" relative timestamp.
+  if (
+    /\[\d{1,2}:\d{2} [AP]M\]/.test(text) &&
+    text.includes("#general")
+  ) {
     return TRANSCRIPT_FORMAT.DISCORD;
   }
-  if (/Today at \d{1,2}:\d{2}/.test(text)) {
+  if (/Today at \d{1,2}:\d{2} [AP]M/.test(text)) {
     return TRANSCRIPT_FORMAT.DISCORD;
   }
 
-  // Slack — bare time stamp followed by a username on the next line.
-  if (/\d{1,2}:\d{2} [AP]M\n[A-Z]/.test(text)) {
-    return TRANSCRIPT_FORMAT.SLACK;
-  }
-
-  // WhatsApp — date + time prefix on each line.
-  if (/\d{1,2}\/\d{1,2}\/\d{2,4},? \d{1,2}:\d{2}/.test(text)) {
+  // WhatsApp — the literal export format, e.g. "12/04/2025, 9:30 am - "
+  if (
+    /\d{1,2}\/\d{1,2}\/\d{4},\s\d{1,2}:\d{2}\s[ap]m\s-\s/.test(text)
+  ) {
     return TRANSCRIPT_FORMAT.WHATSAPP;
   }
 
@@ -47,13 +50,27 @@ export function detectTranscriptFormat(text: string): TranscriptFormat {
     return TRANSCRIPT_FORMAT.EMAIL;
   }
 
-  // Zoom / Teams auto-transcript — VTT marker or a Zoom footer.
-  if (text.includes("WEBVTT") || text.includes("Transcription by")) {
+  // Zoom / Teams auto-transcript — WEBVTT header, or Zoom's
+  // "Transcription by Zoom" footer specifically.
+  if (
+    text.includes("WEBVTT") ||
+    text.includes("Transcription by Zoom")
+  ) {
     return TRANSCRIPT_FORMAT.ZOOM;
   }
 
-  // Standard "Firstname Lastname:" speaker labels at line starts.
-  if (/^[A-Z][a-z]+ [A-Z][a-z]+:/m.test(text)) {
+  // Slack — strict Slack-export pattern: bracketed time, name, then
+  // the APP marker on the next line. This is intentionally narrow so
+  // generic "Maya: hi" meeting transcripts don't trip it.
+  if (
+    /\[\d{1,2}:\d{2}\]\s+[A-Z][a-z]+\s+[A-Z][a-z]+\nAPP/.test(text)
+  ) {
+    return TRANSCRIPT_FORMAT.SLACK;
+  }
+
+  // Standard meeting — "Firstname:" or "Firstname Lastname:" at the
+  // start of a line, followed by a space.
+  if (/^[A-Z][a-z]+(\s[A-Z][a-z]+)?:\s/m.test(text)) {
     return TRANSCRIPT_FORMAT.MEETING;
   }
 

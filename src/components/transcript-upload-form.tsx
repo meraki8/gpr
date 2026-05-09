@@ -22,7 +22,7 @@ const ACCEPTED_TYPES = ".txt,.pdf,text/plain,application/pdf";
 export function TranscriptUploadForm({ projectId }: { projectId: string }) {
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
-  const [files, setFiles] = useState<File[]>([]);
+  const [file, setFile] = useState<File | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const [duplicateIso, setDuplicateIso] = useState<string | null>(null);
   const formRef = useRef<HTMLFormElement>(null);
@@ -36,11 +36,10 @@ export function TranscriptUploadForm({ projectId }: { projectId: string }) {
       formData.set("confirmDuplicate", "true");
       confirmDupRef.current = false;
     }
-    // The form's hidden file input is the source of truth — but if
-    // the user dropped files via DnD they live only in our React
-    // state. Sync the first file across so the server action sees it.
-    if (files.length > 0) {
-      formData.set("file", files[0], files[0].name);
+    // If the user dropped a file via DnD it lives only in React
+    // state — sync it onto the form so the server action sees it.
+    if (file) {
+      formData.set("file", file, file.name);
     }
     startTransition(async () => {
       try {
@@ -62,19 +61,20 @@ export function TranscriptUploadForm({ projectId }: { projectId: string }) {
     formRef.current?.requestSubmit();
   };
 
-  const acceptFiles = (list: FileList | File[]) => {
-    const arr = Array.from(list).filter((f) =>
-      /\.(txt|pdf)$/i.test(f.name) ||
-      f.type === "text/plain" ||
-      f.type === "application/pdf",
+  const acceptFile = (list: FileList | File[]) => {
+    const first = Array.from(list).find(
+      (f) =>
+        /\.(txt|pdf)$/i.test(f.name) ||
+        f.type === "text/plain" ||
+        f.type === "application/pdf",
     );
-    if (arr.length === 0) return;
-    setFiles(arr);
+    if (!first) return;
+    setFile(first);
   };
 
-  const removeFile = (idx: number) => {
-    setFiles((prev) => prev.filter((_, i) => i !== idx));
-    if (idx === 0 && fileInputRef.current) {
+  const clearFile = () => {
+    setFile(null);
+    if (fileInputRef.current) {
       fileInputRef.current.value = "";
     }
   };
@@ -207,7 +207,7 @@ export function TranscriptUploadForm({ projectId }: { projectId: string }) {
           setDragOver(false);
           if (pending) return;
           if (e.dataTransfer.files?.length) {
-            acceptFiles(e.dataTransfer.files);
+            acceptFile(e.dataTransfer.files);
           }
         }}
         style={dropZoneStyle}
@@ -217,10 +217,9 @@ export function TranscriptUploadForm({ projectId }: { projectId: string }) {
           type="file"
           name="file"
           accept={ACCEPTED_TYPES}
-          multiple
           disabled={pending}
           onChange={(e) => {
-            if (e.target.files) acceptFiles(e.target.files);
+            if (e.target.files) acceptFile(e.target.files);
           }}
           style={{
             position: "absolute",
@@ -274,82 +273,55 @@ export function TranscriptUploadForm({ projectId }: { projectId: string }) {
         </div>
       </div>
 
-      {files.length > 0 && (
-        <ul
+      {file && (
+        <div
           style={{
-            listStyle: "none",
-            padding: 0,
-            margin: 0,
             display: "flex",
-            flexDirection: "column",
-            gap: 6,
+            alignItems: "center",
+            gap: 12,
+            padding: "10px 14px",
+            border: "1px solid var(--line)",
+            borderRadius: 8,
+            background: "var(--paper)",
           }}
         >
-          {files.map((f, i) => (
-            <li
-              key={`${f.name}-${i}`}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 12,
-                padding: "10px 14px",
-                border: "1px solid var(--line)",
-                borderRadius: 8,
-                background: "var(--paper)",
-              }}
-            >
-              <span
-                style={{
-                  flex: 1,
-                  minWidth: 0,
-                  fontSize: 14,
-                  fontWeight: 500,
-                  color: "var(--ink)",
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  whiteSpace: "nowrap",
-                }}
-              >
-                {f.name}
-              </span>
-              <span
-                className="mute-ink num"
-                style={{ fontSize: 12, whiteSpace: "nowrap" }}
-              >
-                {formatBytes(f.size)}
-              </span>
-              {i === 0 && files.length > 1 && (
-                <span
-                  className="num"
-                  style={{
-                    fontSize: 11,
-                    color: "var(--red)",
-                    fontWeight: 600,
-                    letterSpacing: "0.06em",
-                  }}
-                >
-                  USES THIS ONE
-                </span>
-              )}
-              <button
-                type="button"
-                onClick={() => removeFile(i)}
-                disabled={pending}
-                aria-label={`Remove ${f.name}`}
-                style={{
-                  background: "transparent",
-                  border: 0,
-                  color: "var(--mute)",
-                  cursor: pending ? "not-allowed" : "pointer",
-                  padding: 4,
-                  lineHeight: 0,
-                }}
-              >
-                <X size={14} />
-              </button>
-            </li>
-          ))}
-        </ul>
+          <span
+            style={{
+              flex: 1,
+              minWidth: 0,
+              fontSize: 14,
+              fontWeight: 500,
+              color: "var(--ink)",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {file.name}
+          </span>
+          <span
+            className="mute-ink num"
+            style={{ fontSize: 12, whiteSpace: "nowrap" }}
+          >
+            {formatBytes(file.size)}
+          </span>
+          <button
+            type="button"
+            onClick={clearFile}
+            disabled={pending}
+            aria-label={`Remove ${file.name}`}
+            style={{
+              background: "transparent",
+              border: 0,
+              color: "var(--mute)",
+              cursor: pending ? "not-allowed" : "pointer",
+              padding: 4,
+              lineHeight: 0,
+            }}
+          >
+            <X size={14} />
+          </button>
+        </div>
       )}
 
       <div
@@ -370,9 +342,7 @@ export function TranscriptUploadForm({ projectId }: { projectId: string }) {
         >
           {pending
             ? "Analysing — average ~14 seconds…"
-            : files.length > 1
-              ? `${files.length} files queued — first one runs now.`
-              : "Paste, upload, or both. Whichever you have."}
+            : "Paste, upload, or both. Whichever you have."}
         </span>
 
         <button
@@ -400,7 +370,7 @@ export function TranscriptUploadForm({ projectId }: { projectId: string }) {
           }}
         >
           <span style={{ flex: 1, minWidth: 220 }}>
-            This transcript appears to have already been uploaded on{" "}
+            This transcript looks similar to one uploaded on{" "}
             <strong>
               {new Date(duplicateIso).toLocaleDateString(undefined, {
                 weekday: "short",
@@ -409,15 +379,23 @@ export function TranscriptUploadForm({ projectId }: { projectId: string }) {
                 year: "numeric",
               })}
             </strong>
-            . Are you sure you want to run a new analysis?
+            . It may already be analysed.
           </span>
+          <button
+            type="button"
+            onClick={() => setDuplicateIso(null)}
+            className="pill pill-sm"
+            disabled={pending}
+          >
+            Cancel
+          </button>
           <button
             type="button"
             onClick={runAnyway}
             className="pill pill-sm"
             disabled={pending}
           >
-            Run anyway →
+            Upload anyway
           </button>
         </div>
       )}
