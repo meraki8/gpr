@@ -151,6 +151,41 @@ export default async function ProjectPage({
           <p className="text-xs text-white/40 mt-2 font-mono">
             Recipient gets an email with a 7-day accept link.
           </p>
+
+          {project.invites.length > 0 && (
+            <div className="mt-6">
+              <h3 className="text-xs font-mono uppercase tracking-widest text-white/40 mb-2">
+                Pending invites · {project.invites.length}
+              </h3>
+              <ul className="grid gap-1">
+                {project.invites.map((inv) => {
+                  const daysLeft = Math.max(
+                    0,
+                    Math.ceil(
+                      (inv.expiresAt.getTime() - Date.now()) /
+                        (1000 * 60 * 60 * 24),
+                    ),
+                  );
+                  return (
+                    <li
+                      key={inv.id}
+                      className="flex items-baseline justify-between gap-3 border border-white/10 px-3 py-2 text-sm"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <span className="text-white/40 font-mono text-xs">
+                          Invite sent to{" "}
+                        </span>
+                        <span className="font-mono truncate">{inv.email}</span>
+                      </div>
+                      <span className="text-xs font-mono text-white/40 shrink-0">
+                        {daysLeft} day{daysLeft === 1 ? "" : "s"} left
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          )}
         </div>
 
         <div className="border-t border-white/10 pt-8 mb-12">

@@ -3,7 +3,18 @@ import { Resend } from "resend";
 
 const resend = new Resend(process.env.RESEND_API_KEY);
 
-const FROM = process.env.RESEND_FROM_EMAIL ?? "GPR <onboarding@resend.dev>";
+// In demo mode (RESEND_DOMAIN unset) Resend rejects external recipients
+// because no domain is verified. We hard-pin the sender to its test
+// inbox and route every outgoing message to DEMO_EMAIL so the demo
+// flow still works end-to-end.
+const RESEND_DOMAIN = process.env.RESEND_DOMAIN?.trim();
+const DEMO_EMAIL = process.env.DEMO_EMAIL?.trim();
+const IS_DEMO_MODE = !RESEND_DOMAIN;
+
+const FROM =
+  IS_DEMO_MODE || !process.env.RESEND_FROM_EMAIL
+    ? "GPR <onboarding@resend.dev>"
+    : process.env.RESEND_FROM_EMAIL;
 
 export async function sendInviteEmail({
   to,
@@ -18,15 +29,27 @@ export async function sendInviteEmail({
   projectBrief: string;
   inviteUrl: string;
 }) {
+  if (IS_DEMO_MODE && !DEMO_EMAIL) {
+    throw new Error(
+      "Email send blocked: set DEMO_EMAIL or verify a domain via RESEND_DOMAIN.",
+    );
+  }
+
+  const actualTo = IS_DEMO_MODE ? DEMO_EMAIL! : to;
+  const subject = IS_DEMO_MODE
+    ? `[demo · for ${to}] ${inviterName} invited you to ${projectName} on GPR`
+    : `${inviterName} invited you to ${projectName} on GPR`;
+
   const { data, error } = await resend.emails.send({
     from: FROM,
-    to: [to],
-    subject: `${inviterName} invited you to ${projectName} on GPR`,
+    to: [actualTo],
+    subject,
     html: renderInviteHtml({
       inviterName,
       projectName,
       projectBrief,
       inviteUrl,
+      demoOriginalTo: IS_DEMO_MODE ? to : null,
     }),
   });
 
@@ -42,15 +65,23 @@ function renderInviteHtml({
   projectName,
   projectBrief,
   inviteUrl,
+  demoOriginalTo,
 }: {
   inviterName: string;
   projectName: string;
   projectBrief: string;
   inviteUrl: string;
+  demoOriginalTo: string | null;
 }) {
+  const demoBanner = demoOriginalTo
+    ? `<div style="background:#fef3c7;border:1px solid #f59e0b;color:#92400e;padding:10px 14px;font-family:ui-monospace,Menlo,monospace;font-size:12px;margin-bottom:24px;">
+         <strong>Demo redirect.</strong> The real recipient of this invite is <strong>${escapeHtml(demoOriginalTo)}</strong>; it landed in this inbox because RESEND_DOMAIN is unset.
+       </div>`
+    : "";
   return `<!DOCTYPE html>
 <html><body style="margin:0;padding:0;background:#fafafa;">
   <div style="font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif;max-width:560px;margin:0 auto;padding:32px 24px;color:#111;">
+    ${demoBanner}
     <div style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;letter-spacing:0.3em;color:#DC2626;text-transform:uppercase;margin-bottom:24px;">
       GPR — Group Project Referee
     </div>

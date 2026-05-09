@@ -74,6 +74,11 @@ export async function getProject(projectId: string) {
         take: 12,
       },
       contributionSources: true,
+      invites: {
+        where: { acceptedAt: null, expiresAt: { gt: new Date() } },
+        orderBy: { createdAt: "desc" },
+        include: { inviter: true },
+      },
     },
   });
   if (!project) notFound();
