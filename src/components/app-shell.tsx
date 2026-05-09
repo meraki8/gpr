@@ -6,7 +6,6 @@ import { usePathname } from "next/navigation";
 import { UserButton } from "@clerk/nextjs";
 import {
   BookOpen,
-  Bot,
   ChevronDown,
   FileText,
   Flag,
@@ -19,6 +18,7 @@ import {
   Users,
 } from "lucide-react";
 import type { ReactNode } from "react";
+import { AskGprPanel } from "./ask-gpr-panel";
 
 type SidebarGroup = { id: string; name: string };
 type SidebarProject = { id: string; name: string };
@@ -255,15 +255,6 @@ export function AppShell({
                 )}
                 collapsed={collapsed}
               />
-              <SidebarItem
-                href={`/projects/${currentProject.id}/ask`}
-                label="Ask GPR"
-                icon={<Bot size={16} />}
-                active={pathname.startsWith(
-                  `/projects/${currentProject.id}/ask`,
-                )}
-                collapsed={collapsed}
-              />
             </nav>
           </div>
         )}
@@ -363,6 +354,16 @@ export function AppShell({
         }}
       >
         {children}
+        {/* Ask GPR is project-scoped — only mount on project pages.
+            Trigger button is fixed bottom-right; panel slides in from
+            the right and is rendered inside the themed content
+            wrapper so its CSS variables resolve to the user's theme. */}
+        {currentProject && (
+          <AskGprPanel
+            projectId={currentProject.id}
+            projectName={currentProject.name}
+          />
+        )}
       </div>
     </div>
   );

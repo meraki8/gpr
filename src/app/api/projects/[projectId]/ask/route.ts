@@ -89,10 +89,29 @@ export async function POST(
     kbBlock,
   ].join("\n");
 
+  // Debug — visible in Vercel logs. The user reported the assistant
+  // claiming "I do not have that information" while the page showed
+  // 14 entries; these logs confirm the prompt that actually went to
+  // the model on each request.
+  console.log("[ask] projectId:", projectId);
+  console.log("[ask] kb entries fetched:", kbEntries.length);
+  console.log(
+    "[ask] system prompt (first 200 chars):",
+    system.slice(0, 200),
+  );
+  console.log(
+    "[ask] system prompt total length:",
+    system.length,
+    "chars",
+  );
+
   const result = streamText({
     model: openai(AI_MODEL),
     system,
     messages: await convertToModelMessages(messages),
+    onError: (err) => {
+      console.error("[ask] streamText error:", err);
+    },
   });
 
   return result.toUIMessageStreamResponse();
