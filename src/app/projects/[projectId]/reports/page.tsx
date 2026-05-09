@@ -17,6 +17,7 @@ export default async function ReportsIndexPage({
   ]);
 
   const draftCount = reports.filter((r) => r.status === "DRAFT").length;
+  const roleLabel = isOwner ? "Owner" : "Member";
 
   return (
     <AppShell
@@ -37,90 +38,157 @@ export default async function ReportsIndexPage({
           sub={
             reports.length === 0
               ? isOwner
-                ? "Run a transcript analysis from the project overview to draft your first."
-                : "The owner files reports after each meeting. Check back after the next stand-up."
+                ? "Run a transcript analysis from the Transcripts tab to draft your first."
+                : "Drafts only show to the project owner. You'll see reports here once they're published."
               : isOwner && draftCount > 0
                 ? `${draftCount} draft${draftCount === 1 ? "" : "s"} awaiting review.`
                 : "Newest first."
           }
           right={
-            isOwner ? (
-              <Link
-                href={`/projects/${project.id}#analyze`}
-                className="pill pill-ghost pill-sm"
-                style={{ textDecoration: "none" }}
-              >
-                + Analyse a transcript
-              </Link>
-            ) : null
+            <span
+              className="mute-ink"
+              style={{ fontSize: 11, letterSpacing: "0.04em" }}
+              title={`You: ${user.email}`}
+            >
+              You · {roleLabel}
+            </span>
           }
         />
 
+        {/* Column headers */}
+        {reports.length > 0 && (
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns:
+                "minmax(0, 1fr) 140px 90px 100px 28px",
+              gap: 24,
+              padding: "16px 0 8px",
+              color: "var(--mute)",
+              fontSize: 11,
+              letterSpacing: "0.04em",
+              textTransform: "uppercase",
+              borderBottom: "1px solid var(--line)",
+            }}
+          >
+            <span>Meeting</span>
+            <span>Date</span>
+            <span style={{ textAlign: "right" }}>Cards</span>
+            <span>Status</span>
+            <span />
+          </div>
+        )}
+
         <section>
-          {reports.map((r, i) => (
-            <Link
-              key={r.id}
-              href={`/projects/${project.id}/reports/${r.id}`}
-              className="row-hover fade-up"
-              style={{
-                display: "grid",
-                gridTemplateColumns: "180px 1fr 90px 80px 28px",
-                gap: 32,
-                padding: "24px 0",
-                borderBottom: "1px solid var(--line)",
-                alignItems: "baseline",
-                animationDelay: `${Math.min(i, 12) * 30}ms`,
-              }}
-            >
-              <span
-                className="num"
-                style={{ fontSize: 14, color: "var(--ink)" }}
-              >
-                {r.createdAt.toLocaleDateString(undefined, {
-                  weekday: "short",
-                  month: "short",
-                  day: "numeric",
-                })}
-              </span>
-              <span
-                className="body"
+          {reports.map((r, i) => {
+            const meetingTime = r.transcript?.meetingAt ?? r.createdAt;
+            const fallbackTitle = `Meeting · ${meetingTime.toLocaleDateString(undefined, { month: "short", day: "numeric" })}`;
+            const title = r.transcript?.title ?? fallbackTitle;
+            const cards = r._count.cards;
+            const isDraft = r.status === "DRAFT";
+
+            return (
+              <Link
+                key={r.id}
+                href={`/projects/${project.id}/reports/${r.id}`}
+                className="row-hover fade-up"
                 style={{
-                  fontSize: 15,
-                  color: "var(--ink-2)",
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  display: "-webkit-box",
-                  WebkitLineClamp: 2,
-                  WebkitBoxOrient: "vertical",
+                  display: "grid",
+                  gridTemplateColumns:
+                    "minmax(0, 1fr) 140px 90px 100px 28px",
+                  gap: 24,
+                  padding: "20px 0",
+                  borderBottom: "1px solid var(--line)",
+                  alignItems: "center",
+                  animationDelay: `${Math.min(i, 12) * 30}ms`,
+                  textDecoration: "none",
+                  color: "inherit",
                 }}
               >
-                {r.summary}
-              </span>
-              <span
-                className="num mute-ink"
-                style={{ textAlign: "right", fontSize: 13 }}
-              >
-                {r._count.cards} card{r._count.cards === 1 ? "" : "s"}
-              </span>
-              <span
-                className="label"
-                style={{
-                  color:
-                    r.status === "DRAFT" ? "var(--mute)" : "var(--ink)",
-                }}
-              >
-                {r.status}
-              </span>
-              <span
-                className="mute-ink"
-                style={{ fontSize: 16, textAlign: "right" }}
-              >
-                →
-              </span>
-            </Link>
-          ))}
+                <div style={{ minWidth: 0 }}>
+                  <div
+                    className="h-s"
+                    style={{
+                      fontSize: 16,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                      color: "var(--ink)",
+                    }}
+                    title={title}
+                  >
+                    {title}
+                  </div>
+                  <div
+                    className="mute-ink"
+                    style={{
+                      fontSize: 13,
+                      marginTop: 4,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      display: "-webkit-box",
+                      WebkitLineClamp: 1,
+                      WebkitBoxOrient: "vertical",
+                    }}
+                  >
+                    {r.summary}
+                  </div>
+                </div>
+                <div
+                  className="num"
+                  style={{ fontSize: 13, color: "var(--ink-2)" }}
+                >
+                  {meetingTime.toLocaleDateString(undefined, {
+                    weekday: "short",
+                    month: "short",
+                    day: "numeric",
+                  })}
+                </div>
+                <div
+                  className="num"
+                  style={{
+                    textAlign: "right",
+                    fontSize: 18,
+                    color: cards > 0 ? "var(--red)" : "var(--mute-2)",
+                  }}
+                >
+                  {cards || "—"}
+                </div>
+                <StatusBadge draft={isDraft} />
+                <span
+                  className="mute-ink"
+                  style={{ fontSize: 16, textAlign: "right" }}
+                >
+                  →
+                </span>
+              </Link>
+            );
+          })}
         </section>
       </main>
     </AppShell>
+  );
+}
+
+function StatusBadge({ draft }: { draft: boolean }) {
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        padding: "4px 10px",
+        borderRadius: 999,
+        fontSize: 10,
+        letterSpacing: "0.08em",
+        textTransform: "uppercase",
+        fontWeight: 600,
+        background: draft ? "transparent" : "var(--status-good)",
+        color: draft ? "var(--mute)" : "#fff",
+        border: draft ? "1px solid var(--line)" : "1px solid transparent",
+        whiteSpace: "nowrap",
+      }}
+    >
+      {draft ? "Draft" : "Published"}
+    </span>
   );
 }

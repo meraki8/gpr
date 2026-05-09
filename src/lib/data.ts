@@ -391,8 +391,13 @@ export async function getProjectReportsList(projectId: string) {
       group: true,
       members: { where: { userId: user.id }, take: 1 },
       matchReports: {
+        // No DB-level status filter — owner needs drafts in the list,
+        // non-owner filtering happens below.
         orderBy: { createdAt: "desc" },
         include: {
+          transcript: {
+            select: { title: true, meetingAt: true },
+          },
           _count: { select: { cards: true, memberReports: true } },
         },
       },
