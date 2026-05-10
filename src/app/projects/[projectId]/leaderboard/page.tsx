@@ -338,11 +338,11 @@ function PodiumCard({
         </div>
         <div
           style={{
-            display: "flex",
-            alignItems: "flex-start",
-            gap: 16,
+            display: "grid",
+            gridTemplateColumns: "repeat(4, 1fr)",
+            alignItems: "center",
+            gap: 8,
             marginTop: 14,
-            flexWrap: "wrap",
           }}
         >
           <TrendChip trend={member.trend} size={isGold ? "lg" : "md"} />
