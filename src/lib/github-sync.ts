@@ -1,6 +1,6 @@
 import "server-only";
 
-import { Prisma } from "@prisma/client";
+import type { Prisma } from "@prisma/client";
 import { db } from "./db";
 import { ai, AI_MODEL } from "./ai";
 import {
@@ -12,7 +12,14 @@ import {
   type GhCommit,
   type GhPullRequest,
 } from "./github";
-import { searchProjectIssues, type JiraAuth, type JiraIssue } from "./jira";
+import {
+  markIssueDescriptionTasksDone,
+  searchProjectIssues,
+  transitionIssueTo,
+  type JiraAuth,
+  type JiraIssue,
+  type JiraTransitionResult,
+} from "./jira";
 import { KB_SOURCES, addKnowledgeEntries } from "./kb";
 import { recomputeMemberScores } from "./scoring";
 
@@ -36,10 +43,28 @@ export type GithubSyncSummary = {
   repos: number;
   commits: number;
   pullRequests: number;
+  jiraAutoProgressed: number;
+  jiraAutoDone: number;
   jiraStatusFailures: number;
   jiraDoneFailures: number;
   errors: string[];
 };
+
+type JiraIssueContext = {
+  auth: JiraAuth;
+  projectKey: string;
+  issues: JiraIssue[];
+  issuesByKey: Map<string, JiraIssue>;
+};
+
+type JiraAutomationResult = {
+  needed: boolean;
+  actionTaken: boolean;
+  failed: boolean;
+  warning?: string;
+};
+
+const JIRA_PROGRESS_RECHECK_MS = 24 * 60 * 60 * 1000;
 
 function jiraConfigToAuth(config: JiraSourceConfig | null): {
   auth: JiraAuth;
@@ -68,11 +93,9 @@ function issueNeedsDone(issue: JiraIssue): boolean {
   return issue.statusCategory !== "done";
 }
 
-async function maybeLoadJiraIssueMap(projectId: string): Promise<{
-  projectKey: string;
-  issues: JiraIssue[];
-  issuesByKey: Map<string, JiraIssue>;
-} | null> {
+async function maybeLoadJiraIssueMap(
+  projectId: string,
+): Promise<JiraIssueContext | null> {
   const source = await db.contributionSource.findUnique({
     where: { projectId_sourceType: { projectId, sourceType: "JIRA" } },
   });
@@ -83,9 +106,24 @@ async function maybeLoadJiraIssueMap(projectId: string): Promise<{
 
   const issues = await searchProjectIssues(ctx.auth, ctx.projectKey);
   return {
+    auth: ctx.auth,
     projectKey: ctx.projectKey.toUpperCase(),
     issues,
     issuesByKey: new Map(issues.map((issue) => [issue.key.toUpperCase(), issue])),
+  };
+}
+
+function transitionPayload(result: JiraTransitionResult): Prisma.InputJsonObject {
+  if (result.ok) {
+    return {
+      transitionId: result.transitionId,
+      transitionName: result.transitionName,
+      transitionedTo: result.toStatus,
+    };
+  }
+  return {
+    transitionError: result.reason,
+    availableTransitions: result.availableTransitions,
   };
 }
 
@@ -101,6 +139,56 @@ function filesToDiffEvidence(files: GhChangedFile[]): string {
     )
     .join("\n\n---\n\n")
     .slice(0, 18_000);
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function normalizeForDirectMatch(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim()
+    .replace(/\s+/g, " ");
+}
+
+function directJiraMatchFromDiff(
+  issues: JiraIssue[],
+  diffEvidence: string,
+): { issue: JiraIssue; confidence: number; reason: string } | null {
+  const upperDiff = diffEvidence.toUpperCase();
+  const normalizedDiff = normalizeForDirectMatch(diffEvidence);
+
+  for (const issue of issues) {
+    const keyPattern = new RegExp(
+      `(^|[^A-Z0-9])${escapeRegExp(issue.key.toUpperCase())}([^A-Z0-9]|$)`,
+    );
+    if (keyPattern.test(upperDiff)) {
+      return {
+        issue,
+        confidence: 0.98,
+        reason: `Changed file diff contains Jira key ${issue.key}.`,
+      };
+    }
+  }
+
+  for (const issue of issues) {
+    const normalizedSummary = normalizeForDirectMatch(issue.summary);
+    if (
+      normalizedSummary.length >= 20 &&
+      normalizedSummary.split(" ").length >= 3 &&
+      normalizedDiff.includes(normalizedSummary)
+    ) {
+      return {
+        issue,
+        confidence: 0.95,
+        reason: `Changed file diff contains the Jira story summary for ${issue.key}.`,
+      };
+    }
+  }
+
+  return null;
 }
 
 function jiraCandidates(issues: JiraIssue[]): string {
@@ -127,23 +215,29 @@ async function matchJiraIssueFromCode(input: {
     return { issue: null, confidence: 0, reason: "No Jira or code diff available." };
   }
 
+  const diffEvidence = filesToDiffEvidence(input.files);
+  const directMatch = directJiraMatchFromDiff(input.jira.issues, diffEvidence);
+  if (directMatch) return directMatch;
+
   const prompt = [
-    `Match a GitHub code change to the Jira user story it is implementing.`,
-    `Use ONLY the changed file paths and code patches. Do not use commit messages, PR titles, branch names, or Jira keys in text outside the code diff.`,
-    `Choose at most one Jira issue. If the code diff does not clearly correspond to any listed story, return issueKey=null and confidence=0.`,
-    `Return confidence from 0 to 1. Use >=0.65 only when the code diff strongly matches the story intent.`,
+    `Match a GitHub change to the Jira user story it is implementing.`,
+    `Use ONLY the changed file paths and diff content below. Do not use commit messages, PR titles, branch names, or Jira keys outside the diff content.`,
+    `Diff content can include source code, tests, README/Markdown, docs, config, data files, or other project files.`,
+    `A README or documentation-only change can match a Jira story if the diff content clearly describes work on that story.`,
+    `Choose at most one Jira issue. If the diff content does not clearly correspond to any listed story, return issueKey=null and confidence=0.`,
+    `Return confidence from 0 to 1. Use >=0.65 only when the changed paths or diff content strongly match the story intent.`,
     ``,
     `REPO: ${input.repo}`,
     `CHANGE: ${input.changeLabel}`,
     ``,
-    `CODE DIFF:`,
-    filesToDiffEvidence(input.files),
+    `CHANGED FILE DIFF:`,
+    diffEvidence,
     ``,
     `JIRA CANDIDATES:`,
     jiraCandidates(input.jira.issues),
     ``,
     `Respond as JSON:`,
-    `{ "issueKey": "ABC-123" | null, "confidence": 0.0, "reason": "short explanation based on code paths/patches" }`,
+    `{ "issueKey": "ABC-123" | null, "confidence": 0.0, "reason": "short explanation based on changed paths or diff content" }`,
   ].join("\n");
 
   try {
@@ -189,9 +283,11 @@ async function checkCommitJiraProgress(input: {
   commit: GhCommit;
   files: GhChangedFile[];
   userId: string | null;
-  jira: { projectKey: string; issues: JiraIssue[]; issuesByKey: Map<string, JiraIssue> } | null;
-}): Promise<boolean> {
-  if (!input.jira) return false;
+  jira: JiraIssueContext | null;
+}): Promise<JiraAutomationResult> {
+  if (!input.jira) {
+    return { needed: false, actionTaken: false, failed: false };
+  }
 
   const match = await matchJiraIssueFromCode({
     jira: input.jira,
@@ -200,7 +296,16 @@ async function checkCommitJiraProgress(input: {
     files: input.files,
   });
   const issue = match.issue;
-  if (!issue || !issueNeedsProgress(issue)) return false;
+  if (!issue || !issueNeedsProgress(issue)) {
+    return { needed: false, actionTaken: false, failed: false };
+  }
+
+  const transition = await transitionIssueTo(
+    input.jira.auth,
+    issue.key,
+    "in_progress",
+  );
+  const transitioned = transition.ok;
 
   const externalId = `jira-progress:${input.commit.sha}:${issue.key}`;
   const result = await db.contributionEvent.createMany({
@@ -210,8 +315,13 @@ async function checkCommitJiraProgress(input: {
         sourceId: input.sourceId,
         sourceType: "GITHUB",
         externalId,
-        eventType: "commit_jira_not_in_progress",
+        eventType: transitioned
+          ? "jira_auto_in_progress"
+          : "jira_progress_transition_failed",
         payloadJson: {
+          title: transitioned
+            ? `Moved ${issue.key} to In Progress`
+            : `Could not move ${issue.key} to In Progress`,
           repo: input.repo,
           sha: input.commit.sha,
           login: input.commit.author?.login ?? null,
@@ -219,6 +329,9 @@ async function checkCommitJiraProgress(input: {
           issueKey: issue.key,
           issueStatus: issue.statusName,
           issueUrl: issue.url,
+          action: "move_to_in_progress",
+          transitioned,
+          ...transitionPayload(transition),
           matchConfidence: match.confidence,
           matchReason: match.reason,
           files: input.files.slice(0, 10).map((f) => f.filename),
@@ -231,9 +344,15 @@ async function checkCommitJiraProgress(input: {
     skipDuplicates: true,
   });
 
-  if (result.count === 0) return false;
+  if (result.count === 0) {
+    return {
+      needed: true,
+      actionTaken: transitioned,
+      failed: !transitioned,
+    };
+  }
 
-  if (input.userId) {
+  if (!transitioned && input.userId) {
     await db.card.create({
       data: {
         projectId: input.projectId,
@@ -248,6 +367,10 @@ async function checkCommitJiraProgress(input: {
           issueStatus: issue.statusName,
           issueUrl: issue.url,
           summary: issue.summary,
+          transitionError: transition.ok ? null : transition.reason,
+          availableTransitions: transition.ok
+            ? []
+            : transition.availableTransitions,
           matchConfidence: match.confidence,
           matchReason: match.reason,
           files: input.files.slice(0, 10).map((f) => f.filename),
@@ -256,7 +379,11 @@ async function checkCommitJiraProgress(input: {
     });
   }
 
-  return true;
+  return {
+    needed: true,
+    actionTaken: transitioned,
+    failed: !transitioned,
+  };
 }
 
 async function checkMergedPrJiraDone(input: {
@@ -266,12 +393,18 @@ async function checkMergedPrJiraDone(input: {
   pullRequest: GhPullRequest;
   files: GhChangedFile[];
   userId: string | null;
-  jira: { projectKey: string; issues: JiraIssue[]; issuesByKey: Map<string, JiraIssue> } | null;
-}): Promise<boolean> {
-  if (!input.jira || !input.pullRequest.merged_at) return false;
+  jira: JiraIssueContext | null;
+}): Promise<JiraAutomationResult> {
+  if (!input.jira || !input.pullRequest.merged_at) {
+    return { needed: false, actionTaken: false, failed: false };
+  }
   const mergedAtMs = Date.parse(input.pullRequest.merged_at);
-  if (Number.isNaN(mergedAtMs)) return false;
-  if (Date.now() - mergedAtMs < 6 * 60 * 60 * 1000) return false;
+  if (Number.isNaN(mergedAtMs)) {
+    return { needed: false, actionTaken: false, failed: false };
+  }
+  if (Date.now() - mergedAtMs < 6 * 60 * 60 * 1000) {
+    return { needed: false, actionTaken: false, failed: false };
+  }
 
   const match = await matchJiraIssueFromCode({
     jira: input.jira,
@@ -280,7 +413,34 @@ async function checkMergedPrJiraDone(input: {
     files: input.files,
   });
   const issue = match.issue;
-  if (!issue || !issueNeedsDone(issue)) return false;
+  if (!issue || !issueNeedsDone(issue)) {
+    return { needed: false, actionTaken: false, failed: false };
+  }
+
+  let progressTransition: JiraTransitionResult | null = null;
+  let doneTransition = await transitionIssueTo(input.jira.auth, issue.key, "done");
+  if (!doneTransition.ok && issueNeedsProgress(issue)) {
+    progressTransition = await transitionIssueTo(
+      input.jira.auth,
+      issue.key,
+      "in_progress",
+    );
+    if (progressTransition.ok) {
+      doneTransition = await transitionIssueTo(input.jira.auth, issue.key, "done");
+    }
+  }
+
+  const transitioned = doneTransition.ok;
+  let checkboxResult:
+    | Awaited<ReturnType<typeof markIssueDescriptionTasksDone>>
+    | null = null;
+  if (transitioned) {
+    checkboxResult = await markIssueDescriptionTasksDone(
+      input.jira.auth,
+      issue.key,
+      issue.descriptionAdf,
+    );
+  }
 
   const externalId = `jira-done:${input.repo}:${input.pullRequest.number}:${issue.key}`;
   const result = await db.contributionEvent.createMany({
@@ -290,8 +450,13 @@ async function checkMergedPrJiraDone(input: {
         sourceId: input.sourceId,
         sourceType: "GITHUB",
         externalId,
-        eventType: "pr_jira_not_done_after_merge",
+        eventType: transitioned
+          ? "jira_auto_done_after_merge"
+          : "jira_done_transition_failed",
         payloadJson: {
+          title: transitioned
+            ? `Moved ${issue.key} to Done`
+            : `Could not move ${issue.key} to Done`,
           repo: input.repo,
           number: input.pullRequest.number,
           login: input.pullRequest.user?.login ?? null,
@@ -300,6 +465,17 @@ async function checkMergedPrJiraDone(input: {
           issueKey: issue.key,
           issueStatus: issue.statusName,
           issueUrl: issue.url,
+          action: "move_to_done",
+          transitioned,
+          ...(progressTransition
+            ? {
+                progressTransition: transitionPayload(progressTransition),
+              }
+            : {}),
+          doneTransition: transitionPayload(doneTransition),
+          checkboxesUpdated: checkboxResult?.updated ?? false,
+          checkboxUpdateError:
+            checkboxResult && !checkboxResult.ok ? checkboxResult.reason : null,
           matchConfidence: match.confidence,
           matchReason: match.reason,
           files: input.files.slice(0, 20).map((f) => f.filename),
@@ -312,9 +488,21 @@ async function checkMergedPrJiraDone(input: {
     skipDuplicates: true,
   });
 
-  if (result.count === 0) return false;
+  const warning =
+    checkboxResult && !checkboxResult.ok
+      ? checkboxResult.reason
+      : undefined;
 
-  if (input.userId) {
+  if (result.count === 0) {
+    return {
+      needed: true,
+      actionTaken: transitioned,
+      failed: !transitioned,
+      warning,
+    };
+  }
+
+  if (!transitioned && input.userId) {
     await db.card.create({
       data: {
         projectId: input.projectId,
@@ -330,6 +518,10 @@ async function checkMergedPrJiraDone(input: {
           issueStatus: issue.statusName,
           issueUrl: issue.url,
           summary: issue.summary,
+          doneTransition: transitionPayload(doneTransition),
+          progressTransition: progressTransition
+            ? transitionPayload(progressTransition)
+            : null,
           matchConfidence: match.confidence,
           matchReason: match.reason,
           files: input.files.slice(0, 20).map((f) => f.filename),
@@ -338,7 +530,12 @@ async function checkMergedPrJiraDone(input: {
     });
   }
 
-  return true;
+  return {
+    needed: true,
+    actionTaken: transitioned,
+    failed: !transitioned,
+    warning,
+  };
 }
 
 export async function syncGithubProject(
@@ -350,6 +547,8 @@ export async function syncGithubProject(
     repos: 0,
     commits: 0,
     pullRequests: 0,
+    jiraAutoProgressed: 0,
+    jiraAutoDone: 0,
     jiraStatusFailures: 0,
     jiraDoneFailures: 0,
     errors: [],
@@ -408,8 +607,13 @@ export async function syncGithubProject(
     return null;
   });
 
-  const since =
+  const lastEventSyncAt =
     source.lastSyncedAt ?? new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+  const progressRecheckSince = new Date(Date.now() - JIRA_PROGRESS_RECHECK_MS);
+  const since =
+    jira && progressRecheckSince < lastEventSyncAt
+      ? progressRecheckSince
+      : lastEventSyncAt;
 
   for (const repo of repos) {
     const [owner, name] = repo.split("/");
@@ -461,7 +665,7 @@ export async function syncGithubProject(
       summary.commits += result.count;
 
       await addKnowledgeEntries(
-        commits.map((c) => {
+        newCommits.map((c) => {
           const subject = c.commit.message.split("\n")[0].slice(0, 200);
           const body = c.commit.message.includes("\n")
             ? c.commit.message.split("\n").slice(1).join("\n").trim()
@@ -491,7 +695,27 @@ export async function syncGithubProject(
       );
     }
 
-    for (const commit of newCommits) {
+    const existingProgressEvents = await db.contributionEvent.findMany({
+      where: {
+        sourceId: source.id,
+        sourceType: "GITHUB",
+        eventType: {
+          in: ["jira_auto_in_progress", "jira_progress_transition_failed"],
+        },
+        occurredAt: { gte: progressRecheckSince },
+      },
+      select: { externalId: true },
+    });
+    const progressCheckedCommitShas = new Set(
+      existingProgressEvents
+        .map((event) => event.externalId.match(/^jira-progress:([^:]+):/)?.[1])
+        .filter((sha): sha is string => Boolean(sha)),
+    );
+    const commitsForJiraProgressCheck = commits.filter(
+      (commit) => !progressCheckedCommitShas.has(commit.sha),
+    );
+
+    for (const commit of commitsForJiraProgressCheck) {
       const userId = commit.author?.login
         ? (usernameToUserId.get(commit.author.login.toLowerCase()) ?? null)
         : null;
@@ -504,7 +728,7 @@ export async function syncGithubProject(
         );
         continue;
       }
-      const failed = await checkCommitJiraProgress({
+      const jiraProgress = await checkCommitJiraProgress({
         projectId,
         sourceId: source.id,
         repo,
@@ -513,7 +737,9 @@ export async function syncGithubProject(
         userId,
         jira,
       });
-      if (failed) summary.jiraStatusFailures += 1;
+      if (jiraProgress.actionTaken) summary.jiraAutoProgressed += 1;
+      if (jiraProgress.failed) summary.jiraStatusFailures += 1;
+      if (jiraProgress.warning) summary.errors.push(jiraProgress.warning);
     }
 
     let prs: GhPullRequest[] = [];
@@ -603,7 +829,7 @@ export async function syncGithubProject(
       const userId = pr.user?.login
         ? (usernameToUserId.get(pr.user.login.toLowerCase()) ?? null)
         : null;
-      const failed = await checkMergedPrJiraDone({
+      const jiraDone = await checkMergedPrJiraDone({
         projectId,
         sourceId: source.id,
         repo,
@@ -612,7 +838,9 @@ export async function syncGithubProject(
         userId,
         jira,
       });
-      if (failed) summary.jiraDoneFailures += 1;
+      if (jiraDone.actionTaken) summary.jiraAutoDone += 1;
+      if (jiraDone.failed) summary.jiraDoneFailures += 1;
+      if (jiraDone.warning) summary.errors.push(jiraDone.warning);
     }
   }
 

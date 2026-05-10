@@ -5,6 +5,7 @@ import { requireDbUser } from "@/lib/auth";
 import { checkContractGate, getNavContext, getProjectSources } from "@/lib/data";
 import {
   addGithubRepo,
+  removeGithubAccessToken,
   removeGithubRepo,
   setGithubAccessToken,
   setGithubUsername,
@@ -75,40 +76,44 @@ export default async function SourcesPage({
         <PageHead
           eyebrow={`GitHub · ${project.name}`}
           title="GitHub sources."
-          sub="Commits and PRs from connected GitHub repos feed into the ref's evidence pile."
+          sub="Commits and PRs from the connected GitHub repo feed into the ref's evidence pile and help GPR align implementation work with Jira stories."
         />
 
         {/* GitHub */}
         <section
           style={{
-            paddingBottom: 80,
+            paddingBottom: 0,
             borderBottom: "1px solid var(--line)",
           }}
         >
-          <div
-            style={{
-              display: "flex",
-              alignItems: "baseline",
-              justifyContent: "space-between",
-              marginBottom: 32,
-              gap: 14,
-              flexWrap: "wrap",
-            }}
-          >
-            <h2 className="h-m" style={{ margin: 0 }}>
-              GitHub
-            </h2>
-            {canManage && githubSource && githubRepos.length > 0 && (
+          {canManage && githubSource && githubRepos.length > 0 && (
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                marginBottom: 24,
+                gap: 14,
+                flexWrap: "wrap",
+              }}
+            >
               <form action={syncGithubSource}>
                 <input type="hidden" name="projectId" value={projectId} />
                 <button type="submit" className="pill pill-red">
-                  Sync now →
+                  Sync now
                 </button>
               </form>
-            )}
-          </div>
+            </div>
+          )}
           {githubSource?.lastSyncedAt && (
-            <p className="mute-ink" style={{ fontSize: 13, marginTop: -16, marginBottom: 32 }}>
+            <p
+              className="mute-ink"
+              style={{
+                fontSize: 13,
+                marginTop: githubRepos.length > 0 ? -16 : 0,
+                marginBottom: 32,
+              }}
+            >
               Last synced{" "}
               {githubSource.lastSyncedAt.toLocaleString("en-NZ", {
                 timeZone: "Pacific/Auckland",
@@ -137,125 +142,181 @@ export default async function SourcesPage({
             </div>
           )}
 
-          <div className="label" style={{ marginBottom: 14 }}>
-            Repos
-          </div>
-          {githubRepos.length === 0 ? (
-            <p
-              className="body mute-ink"
-              style={{ margin: 0, marginBottom: 24 }}
-            >
-              No repos connected yet.
-            </p>
-          ) : (
-            <ul
-              style={{
-                listStyle: "none",
-                padding: 0,
-                margin: "0 0 24px 0",
-                display: "grid",
-                gap: 0,
-              }}
-            >
-              {githubRepos.map((r) => (
-                <li
-                  key={r}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    padding: "12px 0",
-                    borderBottom: "1px solid var(--line-2)",
-                  }}
+          <div style={{ display: "grid", gap: 24, marginBottom: 32 }}>
+            <div>
+              {githubRepos.length === 0 ? (
+                <>
+                  <div className="label" style={{ marginBottom: 14 }}>
+                    Repos
+                  </div>
+                  <p
+                    className="body mute-ink"
+                    style={{ margin: 0, marginBottom: 14 }}
+                  >
+                    No repos connected yet.
+                  </p>
+                </>
+              ) : (
+                <div style={{ maxWidth: 720, marginBottom: 14 }}>
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: isOwner ? "340px 160px" : "340px",
+                      gap: 20,
+                      marginBottom: 8,
+                    }}
+                  >
+                    <div className="label">Repos</div>
+                    {isOwner && <div className="label">Token</div>}
+                  </div>
+                  {githubRepos.map((r) => (
+                    <div
+                      key={r}
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: isOwner ? "340px 160px" : "340px",
+                        gap: 20,
+                        alignItems: "start",
+                        padding: "0 0 14px",
+                      }}
+                    >
+                      <div
+                        style={{
+                          display: "grid",
+                          gridTemplateRows: "62px auto",
+                          alignItems: "start",
+                        }}
+                      >
+                        <a
+                          href={`https://github.com/${r}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="num lk"
+                          style={{
+                            fontSize: 14,
+                            borderBottom: "none",
+                            textDecoration: "none",
+                            overflowWrap: "anywhere",
+                          }}
+                        >
+                          {r}
+                        </a>
+                        {isOwner && (
+                          <form action={removeGithubRepo}>
+                            <input type="hidden" name="projectId" value={projectId} />
+                            <input type="hidden" name="repo" value={r} />
+                            <button type="submit" className="pill pill-ghost pill-sm">
+                              Remove repo
+                            </button>
+                          </form>
+                        )}
+                      </div>
+                      {isOwner && (
+                        <div
+                          style={{
+                            display: "grid",
+                            gridTemplateRows: "62px auto",
+                            alignItems: "start",
+                          }}
+                        >
+                          <span
+                            className="num mute-ink"
+                            style={{
+                              display: "inline-block",
+                              fontSize: 13,
+                            }}
+                          >
+                            {maskToken(githubAccessToken)}
+                          </span>
+                          {githubAccessToken && (
+                            <form
+                              action={removeGithubAccessToken}
+                            >
+                              <input type="hidden" name="projectId" value={projectId} />
+                              <button type="submit" className="pill pill-ghost pill-sm">
+                                Remove token
+                              </button>
+                            </form>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {canManage && githubRepos.length === 0 && (
+                <form
+                  action={addGithubRepo}
+                  style={{ display: "flex", gap: 10, maxWidth: 560 }}
                 >
+                  <input type="hidden" name="projectId" value={projectId} />
+                  <input
+                    type="text"
+                    name="repo"
+                    placeholder="owner/repo"
+                    required
+                    className="field num"
+                    style={{ flex: 1 }}
+                  />
+                  <button type="submit" className="pill pill-sm">
+                    Add
+                  </button>
+                </form>
+              )}
+            </div>
+
+            {isOwner && !githubAccessToken && (
+              <div style={{ maxWidth: 720 }}>
+                <div className="label" style={{ marginBottom: 10 }}>
+                  Private repo access
+                </div>
+                <form
+                  action={setGithubAccessToken}
+                  style={{ display: "flex", gap: 10, alignItems: "center" }}
+                >
+                  <input type="hidden" name="projectId" value={projectId} />
+                  <input
+                    type="password"
+                    name="githubAccessToken"
+                    placeholder="Fine-grained PAT"
+                    required
+                    className="field num"
+                    style={{ flex: 1 }}
+                  />
+                  <button type="submit" className="pill pill-ghost pill-sm">
+                    Save token
+                  </button>
+                </form>
+                <p
+                  className="body mute-ink"
+                  style={{ margin: "8px 0 0", fontSize: 12 }}
+                >
+                  Create a fine-grained PAT at{" "}
                   <a
-                    href={`https://github.com/${r}`}
+                    href="https://github.com/settings/personal-access-tokens/new"
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="num lk"
-                    style={{ fontSize: 14 }}
+                    className="lk"
                   >
-                    {r}
+                    GitHub personal access tokens
                   </a>
-                  {isOwner && (
-                    <form action={removeGithubRepo}>
-                      <input type="hidden" name="projectId" value={projectId} />
-                      <input type="hidden" name="repo" value={r} />
-                      <button
-                        type="submit"
-                        className="lk-mute"
-                        style={{ fontSize: 12 }}
-                      >
-                        Remove
-                      </button>
-                    </form>
-                  )}
-                </li>
-              ))}
-            </ul>
-          )}
-
-          {canManage && (
-            <form
-              action={addGithubRepo}
-              style={{ display: "flex", gap: 10, maxWidth: 480 }}
-            >
-              <input type="hidden" name="projectId" value={projectId} />
-              <input
-                type="text"
-                name="repo"
-                placeholder="owner/repo"
-                required
-                className="field num"
-                style={{ flex: 1 }}
-              />
-              <button type="submit" className="pill pill-sm">
-                Add →
-              </button>
-            </form>
-          )}
-
-          {isOwner && (
-            <div style={{ marginTop: 32, maxWidth: 560 }}>
-              <div className="label" style={{ marginBottom: 10 }}>
-                Private repo access
+                  . It must grant read access to Contents (files and Metadata)
+                  and Pull Requests. Use these fields: Token name — anything;
+                  Description — anything; Resource owner — whoever owns the
+                  project repository; Expiration — however long you want the
+                  project to be refereed; Repository access — “Only select
+                  repositories” and select the project repository; Permissions —
+                  Add permissions, then select “Contents” (this also selects
+                  Metadata) and “Pull Requests”.
+                </p>
               </div>
-              <div
-                className="mute-ink num"
-                style={{ fontSize: 12, marginBottom: 12 }}
-              >
-                Token {maskToken(githubAccessToken)}
-              </div>
-              <form
-                action={setGithubAccessToken}
-                style={{ display: "flex", gap: 10, alignItems: "center" }}
-              >
-                <input type="hidden" name="projectId" value={projectId} />
-                <input
-                  type="password"
-                  name="githubAccessToken"
-                  placeholder="Fine-grained PAT"
-                  required
-                  className="field num"
-                  style={{ flex: 1 }}
-                />
-                <button type="submit" className="pill pill-ghost pill-sm">
-                  Save token
-                </button>
-              </form>
-              <p
-                className="body mute-ink"
-                style={{ margin: "8px 0 0", fontSize: 12 }}
-              >
-                Use a fine-grained GitHub token with read access to Contents,
-                Metadata and Pull requests for the connected repos.
-              </p>
-            </div>
-          )}
+            )}
+          </div>
 
           <div
             className="label"
-            style={{ marginBottom: 14, marginTop: 56 }}
+            style={{ marginBottom: 14 }}
           >
             Member GitHub usernames
           </div>
@@ -285,13 +346,13 @@ export default async function SourcesPage({
                   style={{
                     display: "flex",
                     alignItems: "center",
-                    gap: 16,
-                    padding: "16px 0",
+                    gap: 18,
+                    padding: "12px 0",
                     borderBottom: "1px solid var(--line-2)",
                     flexWrap: "wrap",
                   }}
                 >
-                  <div style={{ flex: 1, minWidth: 200 }}>
+                  <div style={{ width: 260, maxWidth: "100%" }}>
                     <div style={{ fontSize: 15, fontWeight: 500 }}>
                       {m.user.name ?? m.user.email}
                     </div>
@@ -317,7 +378,7 @@ export default async function SourcesPage({
                         defaultValue={identity?.externalId ?? ""}
                         required
                         className="field num"
-                        style={{ width: 200, padding: "8px 12px" }}
+                        style={{ width: 360, maxWidth: "100%", padding: "8px 12px" }}
                       />
                       <button
                         type="submit"
@@ -342,7 +403,7 @@ export default async function SourcesPage({
 
 
         {/* GitHub leaderboard */}
-        <section style={{ padding: "80px 0 0" }}>
+        <section style={{ padding: "24px 0 0" }}>
           <div className="label" style={{ marginBottom: 32 }}>
             GitHub leaderboard
           </div>
@@ -488,7 +549,7 @@ export default async function SourcesPage({
           )}
         </section>
         {/* Recent activity */}
-        <section style={{ padding: "80px 0 0" }}>
+        <section style={{ padding: "64px 0 0" }}>
           <div
             style={{
               display: "flex",
@@ -535,9 +596,11 @@ export default async function SourcesPage({
                     className="mute-ink num"
                     style={{ fontSize: 12 }}
                   >
-                    {e.occurredAt.toLocaleDateString(undefined, {
+                    {e.occurredAt.toLocaleString(undefined, {
                       month: "short",
                       day: "numeric",
+                      hour: "numeric",
+                      minute: "2-digit",
                     })}
                   </span>
                   <span
@@ -599,7 +662,7 @@ export default async function SourcesPage({
             >
               {page > 1 && (
                 <Link
-                  href={`/projects/${projectId}/sources?page=${page - 1}`}
+                  href={`/projects/${projectId}/sources/github?page=${page - 1}`}
                   className="pill pill-ghost pill-sm"
                   style={{ textDecoration: "none" }}
                 >
@@ -608,7 +671,7 @@ export default async function SourcesPage({
               )}
               {hasNextPage && (
                 <Link
-                  href={`/projects/${projectId}/sources?page=${page + 1}`}
+                  href={`/projects/${projectId}/sources/github?page=${page + 1}`}
                   className="pill pill-ghost pill-sm"
                   style={{ textDecoration: "none" }}
                 >

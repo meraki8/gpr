@@ -26,34 +26,19 @@ type AcJudgement = {
   reason: string;
 };
 
-function isPlausibleAc(text: string): boolean {
-  const cleaned = text.trim().replace(/\s+/g, " ");
-  const lower = cleaned.toLowerCase();
-
-  if (cleaned.length < 12) return false;
-  if (cleaned.split(/\s+/).length < 3) return false;
-  if (/^[\d\s+\-*/=().]+$/.test(cleaned)) return false;
-  if (/^(yes|no|maybe|true|false|n\/a|done|todo)$/i.test(cleaned)) {
-    return false;
-  }
-  if (
-    /figment of my imagination/i.test(cleaned) ||
-    /^the project exists\.?$/i.test(cleaned)
-  ) {
-    return false;
-  }
-
-  const hasTestableVerb =
-    /\b(can|shows?|displays?|returns?|creates?|updates?|saves?|rejects?|accepts?|sends?|receives?|loads?|persists?|appears?|opens?|closes?|prevents?|validates?|passes?|fails?|syncs?|maps?|connects?|disconnects?|completes?)\b/.test(
-      lower,
-    );
-  const hasProductSubject =
-    /\b(user|admin|member|team|project|page|screen|button|form|api|webhook|jira|ticket|issue|sprint|leaderboard|auth|login|sign in|session|error|app|data|card|status|comment)\b/.test(
-      lower,
-    );
-
-  return hasTestableVerb && hasProductSubject;
-}
+type JiraActivityPayload = {
+  issueId?: string;
+  title?: string;
+  issueKey?: string;
+  assigneeDisplayName?: string;
+  url?: string;
+  status?: string;
+  previousStatus?: string;
+  acHasAc?: boolean;
+  acAllMet?: boolean;
+  acSummary?: string;
+  acJudgements?: AcJudgement[];
+};
 
 function maskToken(token: string | undefined): string {
   if (!token) return "—";
@@ -69,6 +54,23 @@ const EVENT_LABELS: Record<string, { label: string; color: string }> = {
   issue_overdue: { label: "overdue", color: "var(--red)" },
   issue_stale: { label: "stale", color: "var(--mute-2)" },
 };
+
+function isCompletedEvent(eventType: string): boolean {
+  return (
+    eventType === "issue_completed" ||
+    eventType === "issue_completed_ac_failed"
+  );
+}
+
+function isDoneStatus(status: string | undefined): boolean {
+  return /^(done|complete|completed|closed|resolved)$/i.test(
+    status?.trim() ?? "",
+  );
+}
+
+function activityIssueKey(payload: JiraActivityPayload): string | null {
+  return payload.issueId ?? payload.issueKey ?? payload.title ?? null;
+}
 
 export default async function JiraPage({
   params,
@@ -86,6 +88,26 @@ export default async function JiraPage({
     getProjectSources(projectId, page, "JIRA"),
   ]);
   const { project, contributionEvents, isOwner, hasNextPage } = sources;
+  const visibleJiraEvents = contributionEvents.filter((event) => {
+    if (event.eventType !== "issue_updated") return true;
+    const payload = event.payloadJson as JiraActivityPayload;
+    if (!payload.previousStatus || !isDoneStatus(payload.status)) return true;
+
+    const issueKey = activityIssueKey(payload);
+    if (!issueKey) return true;
+
+    return !contributionEvents.some((other) => {
+      if (other.id === event.id || !isCompletedEvent(other.eventType)) {
+        return false;
+      }
+      const otherPayload = other.payloadJson as JiraActivityPayload;
+      if (activityIssueKey(otherPayload) !== issueKey) return false;
+      return (
+        Math.abs(other.occurredAt.getTime() - event.occurredAt.getTime()) <
+        2 * 60 * 1000
+      );
+    });
+  });
 
   const jiraSource = project.contributionSources.find(
     (s) => s.sourceType === "JIRA",
@@ -121,44 +143,29 @@ export default async function JiraPage({
 
         <section
           style={{
-            padding: "0 0 80px",
+            padding: "0 0 24px",
             borderBottom: "1px solid var(--line)",
           }}
         >
-          <div
-            style={{
-              display: "flex",
-              alignItems: "baseline",
-              justifyContent: "space-between",
-              marginBottom: 32,
-              gap: 14,
-              flexWrap: "wrap",
-            }}
-          >
-            <h2 className="h-m" style={{ margin: 0 }}>
-              Jira
-            </h2>
-            <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
-              {/* Sync is open to any member; Disconnect stays
-                  owner-only since it's destructive. */}
-              {isConnectedWithApi && (
-                <form action={syncJiraSource}>
-                  <input type="hidden" name="projectId" value={projectId} />
-                  <button type="submit" className="pill pill-red">
-                    Sync now →
-                  </button>
-                </form>
-              )}
-              {isOwner && jiraSource && (
-                <form action={disconnectJira}>
-                  <input type="hidden" name="projectId" value={projectId} />
-                  <button type="submit" className="lk-mute" style={{ fontSize: 12 }}>
-                    Disconnect
-                  </button>
-                </form>
-              )}
+          {isConnectedWithApi && (
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                marginBottom: 24,
+                gap: 14,
+                flexWrap: "wrap",
+              }}
+            >
+              <form action={syncJiraSource}>
+                <input type="hidden" name="projectId" value={projectId} />
+                <button type="submit" className="pill pill-red">
+                  Sync now
+                </button>
+              </form>
             </div>
-          </div>
+          )}
 
           {jiraSource?.lastSyncedAt && (
             <p className="mute-ink" style={{ fontSize: 13, marginTop: -16, marginBottom: 32 }}>
@@ -178,7 +185,7 @@ export default async function JiraPage({
             <>
               <p className="body mute-ink" style={{ marginBottom: 32, fontSize: 14 }}>
                 Connect your Jira project with an Atlassian API token. GPR pulls
-                issues directly — no Make.com setup required. Generate a token at{" "}
+                issues directly — no setup required. Generate a token at{" "}
                 <a
                   href="https://id.atlassian.com/manage-profile/security/api-tokens"
                   target="_blank"
@@ -191,7 +198,7 @@ export default async function JiraPage({
               </p>
               <form
                 action={connectJira}
-                style={{ display: "grid", gap: 14, maxWidth: 560 }}
+                style={{ display: "grid", gap: 14, maxWidth: 820 }}
               >
                 <input type="hidden" name="projectId" value={projectId} />
                 <div>
@@ -199,7 +206,7 @@ export default async function JiraPage({
                   <input
                     type="url"
                     name="jiraBaseUrl"
-                    placeholder="https://yourorg.atlassian.net"
+                    placeholder="https://yourorg.atlassian.net/jira/software/projects/yourprojectkey/boards/100"
                     defaultValue={jiraConfig?.baseUrl ?? ""}
                     required
                     className="field"
@@ -243,8 +250,7 @@ export default async function JiraPage({
                     style={{ width: "100%" }}
                   />
                   <p className="mute-ink" style={{ fontSize: 12, marginTop: 6 }}>
-                    Stored per-project. Used for read-only access to issues, status,
-                    and comments.
+                    Stored per-project. Used for issue sync and Jira workflow updates.
                   </p>
                 </div>
                 <button type="submit" className="pill pill-sm" style={{ justifySelf: "start" }}>
@@ -255,7 +261,14 @@ export default async function JiraPage({
           ) : (
             <>
               <div style={{ display: "grid", gap: 24, marginBottom: 48 }}>
-                <div style={{ display: "grid", gap: 14, gridTemplateColumns: "repeat(3, 1fr)" }}>
+                <div
+                  style={{
+                    display: "flex",
+                    gap: 24,
+                    alignItems: "flex-start",
+                    flexWrap: "wrap",
+                  }}
+                >
                   <div>
                     <div className="label" style={{ marginBottom: 6 }}>Project key</div>
                     <span className="num" style={{ fontSize: 15 }}>{jiraConfig?.projectKey}</span>
@@ -278,6 +291,14 @@ export default async function JiraPage({
                       {maskToken(jiraConfig?.apiToken)}
                     </span>
                   </div>
+                  {isOwner && jiraSource && (
+                    <form action={disconnectJira} style={{ marginLeft: "auto" }}>
+                      <input type="hidden" name="projectId" value={projectId} />
+                      <button type="submit" className="lk-mute" style={{ fontSize: 12 }}>
+                        Disconnect workspace
+                      </button>
+                    </form>
+                  )}
                 </div>
 
                 <div>
@@ -285,9 +306,10 @@ export default async function JiraPage({
                     Acceptance criteria format
                   </div>
                   <p className="body mute-ink" style={{ fontSize: 13, margin: 0, marginBottom: 10 }}>
-                    Add this to any Jira issue&apos;s description. When the issue moves
-                    to Done, GPR uses Claude to judge each criterion against the
-                    description and recent comments. Misses become yellow cards.
+                    Put your Acceptance Criteria in the Description field of your user stories.
+                    A format like below works well. When the issue moves to Done, GPR
+                    judges each criterion against GitHub code evidence. Misses become
+                    yellow cards.
                   </p>
                   <pre
                     style={{
@@ -313,7 +335,7 @@ export default async function JiraPage({
               </div>
               <p className="body mute-ink" style={{ fontSize: 14, marginBottom: 24, marginTop: 0 }}>
                 Map each member to their Jira account ID so events get attributed correctly.
-                Find it in Jira: profile → Account ID (a long string like <code style={{ fontSize: 12 }}>abc123def456</code>).
+                Find it in Jira: profile → Account ID (a long string like <code style={{ fontSize: 12 }}>712020:7ab3afb2-5b06-42e6-89ee-9a8f619aa167</code>).
               </p>
               <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
                 {project.members.map((m) => {
@@ -326,13 +348,13 @@ export default async function JiraPage({
                       style={{
                         display: "flex",
                         alignItems: "center",
-                        gap: 16,
-                        padding: "16px 0",
+                        gap: 18,
+                        padding: "12px 0",
                         borderBottom: "1px solid var(--line-2)",
                         flexWrap: "wrap",
                       }}
                     >
-                      <div style={{ flex: 1, minWidth: 200 }}>
+                      <div style={{ width: 260, maxWidth: "100%" }}>
                         <div style={{ fontSize: 15, fontWeight: 500 }}>
                           {m.user.name ?? m.user.email}
                         </div>
@@ -354,7 +376,7 @@ export default async function JiraPage({
                             defaultValue={identity?.externalId ?? ""}
                             required
                             className="field num"
-                            style={{ width: 220, padding: "8px 12px" }}
+                            style={{ width: 360, maxWidth: "100%", padding: "8px 12px" }}
                           />
                           <button type="submit" className="pill pill-ghost pill-sm">
                             Save
@@ -371,14 +393,14 @@ export default async function JiraPage({
               </ul>
 
               {webhookUrl && (
-                <details style={{ marginTop: 56 }}>
+                <details style={{ marginTop: 14 }}>
                   <summary
                     className="lk-mute"
                     style={{ fontSize: 12, cursor: "pointer" }}
                   >
                     Advanced: Make.com webhook (legacy fallback)
                   </summary>
-                  <p className="body mute-ink" style={{ fontSize: 13, marginTop: 12 }}>
+                  <p className="body mute-ink" style={{ fontSize: 13, margin: "8px 0 0" }}>
                     Most users should ignore this — the API token connection above
                     handles everything. The webhook endpoint is here for users who
                     already have a Make.com scenario configured.
@@ -393,7 +415,7 @@ export default async function JiraPage({
                       fontSize: 12,
                       wordBreak: "break-all",
                       color: "var(--ink)",
-                      marginTop: 8,
+                      marginTop: 6,
                     }}
                   >
                     {webhookUrl}
@@ -405,7 +427,7 @@ export default async function JiraPage({
         </section>
 
         {/* Recent Jira activity */}
-        <section style={{ padding: "80px 0 0" }}>
+        <section style={{ padding: "48px 0 0" }}>
           <div
             style={{
               display: "flex",
@@ -421,7 +443,7 @@ export default async function JiraPage({
               </span>
             )}
           </div>
-          {contributionEvents.length === 0 ? (
+          {visibleJiraEvents.length === 0 ? (
             <p className="body mute-ink" style={{ margin: 0 }}>
               {page > 1
                 ? "No more events."
@@ -430,36 +452,42 @@ export default async function JiraPage({
                   : "No Jira events yet. Connect Jira above to start syncing."}
             </p>
           ) : (
-            contributionEvents.map((e, i) => {
-              const payload = e.payloadJson as {
-                title?: string;
-                issueKey?: string;
-                assigneeDisplayName?: string;
-                url?: string;
-                status?: string;
-                previousStatus?: string;
-                acAllMet?: boolean;
-                acSummary?: string;
-                acJudgements?: AcJudgement[];
-              };
+            visibleJiraEvents.map((e, i) => {
+              const payload = e.payloadJson as JiraActivityPayload;
               const meta = EVENT_LABELS[e.eventType] ?? {
                 label: e.eventType,
                 color: "var(--mute)",
               };
-              const showAc =
-                e.eventType === "issue_completed" ||
-                e.eventType === "issue_completed_ac_failed";
-              const acJudgements = (payload.acJudgements ?? []).filter((j) =>
-                isPlausibleAc(j.acText),
+              const showAc = isCompletedEvent(e.eventType);
+              const acJudgements = (payload.acJudgements ?? []).filter(
+                (j) => j.acText.trim().length > 0,
               );
+              const hasAcPayload =
+                typeof payload.acHasAc === "boolean" ||
+                typeof payload.acAllMet === "boolean" ||
+                typeof payload.acSummary === "string" ||
+                (payload.acJudgements?.length ?? 0) > 0;
+              const acHasAc =
+                payload.acHasAc === true ||
+                (payload.acHasAc !== false && acJudgements.length > 0);
               const acAllMet =
-                acJudgements.length === 0 ||
-                acJudgements.every((j) => j.aiThinksDone);
-              const eventMeta =
-                e.eventType === "issue_completed_ac_failed" &&
-                acJudgements.length === 0
+                acHasAc &&
+                (typeof payload.acAllMet === "boolean"
+                  ? payload.acAllMet
+                  : acJudgements.length > 0 &&
+                    acJudgements.every((j) => j.aiThinksDone));
+              const acSummary =
+                payload.acSummary ??
+                (hasAcPayload
+                  ? "No acceptance criteria were found for this ticket."
+                  : "AC has not been judged with code evidence yet. Sync Jira to run the current judge.");
+              const eventMeta = showAc
+                ? acAllMet
                   ? { label: "completed", color: "#10b981" }
-                  : meta;
+                  : hasAcPayload && acHasAc
+                    ? { label: "done · AC failed", color: "var(--red)" }
+                    : { label: "completed", color: "#10b981" }
+                : meta;
               return (
                 <div
                   key={e.id}
@@ -479,9 +507,11 @@ export default async function JiraPage({
                     }}
                   >
                     <span className="mute-ink num" style={{ fontSize: 12 }}>
-                      {e.occurredAt.toLocaleDateString(undefined, {
+                      {e.occurredAt.toLocaleString(undefined, {
                         month: "short",
                         day: "numeric",
+                        hour: "numeric",
+                        minute: "2-digit",
                       })}
                     </span>
                     <span className="label" style={{ color: eventMeta.color }}>
@@ -523,47 +553,65 @@ export default async function JiraPage({
                       {payload.previousStatus} → {payload.status}
                     </div>
                   )}
-                  {showAc && acJudgements.length > 0 && (
+                  {showAc && (
                     <div style={{ marginTop: 12, paddingLeft: 124 }}>
                       <div
                         style={{
                           fontSize: 12,
-                          color: acAllMet ? "#10b981" : "var(--red)",
+                          color: acAllMet
+                            ? "#10b981"
+                            : hasAcPayload && acHasAc
+                              ? "var(--red)"
+                              : "var(--mute)",
                           marginBottom: 8,
                           fontWeight: 500,
                         }}
                       >
-                        {acAllMet ? "✓ All AC met" : "⚠ AC not met"} — {payload.acSummary}
+                        {acAllMet
+                          ? "✓ All AC met"
+                          : hasAcPayload && acHasAc
+                            ? "⚠ AC not met"
+                            : hasAcPayload
+                              ? "No AC found"
+                            : "AC not judged"}{" "}
+                        — {acSummary}
                       </div>
-                      <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "grid", gap: 4 }}>
-                        {acJudgements.map((j, idx) => (
-                          <li
-                            key={idx}
-                            style={{
-                              fontSize: 12,
-                              color: j.aiThinksDone ? "var(--ink)" : "var(--red)",
-                              display: "flex",
-                              gap: 8,
-                              alignItems: "baseline",
-                            }}
-                          >
-                            <span style={{ fontFamily: "monospace" }}>
-                              [{j.aiThinksDone ? "x" : " "}]
-                            </span>
-                            <span style={{ flex: 1 }}>
-                              {j.acText}
-                              {j.selfReportedDone !== j.aiThinksDone && (
-                                <span className="mute-ink" style={{ marginLeft: 6 }}>
-                                  (team marked {j.selfReportedDone ? "done" : "not done"})
-                                </span>
-                              )}
-                              <div className="mute-ink" style={{ fontSize: 11, marginTop: 2 }}>
-                                {j.reason}
-                              </div>
-                            </span>
-                          </li>
-                        ))}
-                      </ul>
+                      {acJudgements.length > 0 && (
+                        <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "grid", gap: 4 }}>
+                          {acJudgements.map((j, idx) => (
+                            <li
+                              key={idx}
+                              style={{
+                                fontSize: 12,
+                                color: j.aiThinksDone ? "var(--ink)" : "var(--red)",
+                                display: "flex",
+                                gap: 8,
+                                alignItems: "baseline",
+                                background: "transparent",
+                              }}
+                            >
+                              <span
+                                aria-label={j.aiThinksDone ? "Met" : "Unmet"}
+                                style={{
+                                  color: j.aiThinksDone ? "#10b981" : "var(--red)",
+                                  fontWeight: 700,
+                                  width: 14,
+                                  flex: "0 0 14px",
+                                  textAlign: "center",
+                                }}
+                              >
+                                {j.aiThinksDone ? "✓" : "✕"}
+                              </span>
+                              <span style={{ flex: 1 }}>
+                                {j.acText}
+                                <div className="mute-ink" style={{ fontSize: 11, marginTop: 2 }}>
+                                  {j.reason}
+                                </div>
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
                     </div>
                   )}
                 </div>
