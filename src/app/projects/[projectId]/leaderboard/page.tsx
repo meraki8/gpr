@@ -131,22 +131,16 @@ export default async function LeaderboardPage({
               <PodiumCard
                 member={top3[1]}
                 prominence="silver"
-                projectId={board.project.id}
-                viewerId={user.id}
               />
             )}
             <PodiumCard
               member={top3[0]}
               prominence="gold"
-              projectId={board.project.id}
-              viewerId={user.id}
             />
             {top3.length >= 3 && (
               <PodiumCard
                 member={top3[2]}
                 prominence="bronze"
-                projectId={board.project.id}
-                viewerId={user.id}
               />
             )}
           </section>
@@ -182,7 +176,6 @@ export default async function LeaderboardPage({
                 key={m.id}
                 member={m}
                 animationDelay={i * 60}
-                projectId={board.project.id}
                 viewerId={user.id}
               />
             ))}
@@ -253,13 +246,9 @@ function StatTile({
 function PodiumCard({
   member,
   prominence,
-  projectId,
-  viewerId,
 }: {
   member: Member;
   prominence: "gold" | "silver" | "bronze";
-  projectId: string;
-  viewerId: string;
 }) {
   const isGold = prominence === "gold";
   const medalColor = MEDAL_COLOR[member.rank] ?? "var(--mute)";
@@ -350,10 +339,10 @@ function PodiumCard({
         <div
           style={{
             display: "flex",
-            flexDirection: "column",
             alignItems: "flex-start",
-            gap: 8,
+            gap: 16,
             marginTop: 14,
+            flexWrap: "wrap",
           }}
         >
           <TrendChip trend={member.trend} size={isGold ? "lg" : "md"} />
@@ -369,12 +358,10 @@ function PodiumCard({
 function StandardRow({
   member,
   animationDelay,
-  projectId,
   viewerId,
 }: {
   member: Member;
   animationDelay: number;
-  projectId: string;
   viewerId: string;
 }) {
   return (
