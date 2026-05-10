@@ -12,7 +12,6 @@ import {
 import { AppShell } from "@/components/app-shell";
 import { AnimatedNumber } from "@/components/animated-number";
 import { AvatarImg } from "@/components/avatar-img";
-import { NudgeButton } from "@/components/nudge-button";
 import { PageHead } from "@/components/page-head";
 import { RefCard } from "@/components/ref-card";
 import { requireDbUser } from "@/lib/auth";
@@ -160,7 +159,7 @@ export default async function LeaderboardPage({
               style={{
                 display: "grid",
                 gridTemplateColumns:
-                  "70px minmax(0, 1fr) 110px 110px 150px 110px 110px 110px",
+                  "70px minmax(0, 1fr) 110px 110px 150px 110px 110px",
                 gap: 20,
                 padding: "16px 0 8px",
                 color: "var(--mute)",
@@ -177,7 +176,6 @@ export default async function LeaderboardPage({
               <span>Cards</span>
               <span style={{ textAlign: "right" }}>GitHub</span>
               <span style={{ textAlign: "right" }}>Jira</span>
-              <span style={{ textAlign: "right" }} />
             </div>
             {rest.map((m, i) => (
               <StandardRow
@@ -363,17 +361,6 @@ function PodiumCard({
           <GithubChip github={member.github} size={isGold ? "lg" : "md"} />
           <JiraChip jira={member.jira} size={isGold ? "lg" : "md"} />
         </div>
-        {member.user.id !== viewerId && (
-          <div style={{ marginTop: 14 }}>
-            <NudgeButton
-              projectId={projectId}
-              recipientUserId={member.user.id}
-              recipientName={member.user.name ?? member.user.email}
-              recipientScore={member.contributionScore}
-              size={isGold ? "md" : "sm"}
-            />
-          </div>
-        )}
       </div>
     </div>
   );
@@ -465,21 +452,13 @@ function StandardRow({
       <GithubChip github={member.github} alignRight />
       <JiraChip jira={member.jira} alignRight />
       <div style={{ display: "flex", justifyContent: "flex-end" }}>
-        {member.user.id === viewerId ? (
+        {member.user.id === viewerId && (
           <span
             className="mute-ink"
             style={{ fontSize: 12, fontStyle: "italic" }}
           >
             you
           </span>
-        ) : (
-          <NudgeButton
-            projectId={projectId}
-            recipientUserId={member.user.id}
-            recipientName={member.user.name ?? member.user.email}
-            recipientScore={member.contributionScore}
-            size="sm"
-          />
         )}
       </div>
     </div>
