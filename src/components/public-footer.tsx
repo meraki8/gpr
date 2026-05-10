@@ -20,9 +20,6 @@ export function PublicFooter() {
     >
       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
         <Wordmark small />
-        <span style={{ fontStyle: "italic", color: "var(--mute)" }}>
-          Every project needs a ref.
-        </span>
       </div>
       <div
         style={{
@@ -38,8 +35,10 @@ export function PublicFooter() {
           © {year} GPR — Group Project Referee
         </span>
         <span>
-          Built by Meraki — the act of doing something with soul · Lincoln
-          University, Christchurch New Zealand
+          Built with meraki · Lincoln University, Christchurch New Zealand
+        </span>
+        <span style={{ fontStyle: "italic", color: "var(--mute)" }}>
+          Every project needs a ref.
         </span>
       </div>
     </footer>

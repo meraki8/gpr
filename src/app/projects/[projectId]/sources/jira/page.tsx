@@ -2,7 +2,7 @@ import Link from "next/link";
 import { AppShell } from "@/components/app-shell";
 import { PageHead } from "@/components/page-head";
 import { requireDbUser } from "@/lib/auth";
-import { getNavContext, getProjectSources } from "@/lib/data";
+import { checkContractGate, getNavContext, getProjectSources } from "@/lib/data";
 import { getBaseUrl } from "@/lib/url";
 import {
   connectJira,
@@ -80,14 +80,15 @@ export default async function JiraPage({
   searchParams: Promise<{ page?: string }>;
 }) {
   const [{ projectId }, sp] = await Promise.all([params, searchParams]);
+  await checkContractGate(projectId);
   const page = Math.max(1, parseInt(sp.page ?? "1", 10) || 1);
   const [user, nav, sources] = await Promise.all([
     requireDbUser(),
     getNavContext({ projectId }),
     getProjectSources(projectId, page, "JIRA"),
   ]);
-  const { project, isOwner, hasNextPage } = sources;
-  const visibleJiraEvents = project.contributionEvents.filter((event) => {
+  const { project, contributionEvents, isOwner, hasNextPage } = sources;
+  const visibleJiraEvents = contributionEvents.filter((event) => {
     if (event.eventType !== "issue_updated") return true;
     const payload = event.payloadJson as JiraActivityPayload;
     if (!payload.previousStatus || !isDoneStatus(payload.status)) return true;
@@ -95,7 +96,7 @@ export default async function JiraPage({
     const issueKey = activityIssueKey(payload);
     if (!issueKey) return true;
 
-    return !project.contributionEvents.some((other) => {
+    return !contributionEvents.some((other) => {
       if (other.id === event.id || !isCompletedEvent(other.eventType)) {
         return false;
       }

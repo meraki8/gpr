@@ -2,7 +2,7 @@ import Link from "next/link";
 import { AppShell } from "@/components/app-shell";
 import { PageHead } from "@/components/page-head";
 import { requireDbUser } from "@/lib/auth";
-import { getNavContext, getProjectSources } from "@/lib/data";
+import { checkContractGate, getNavContext, getProjectSources } from "@/lib/data";
 import {
   addGithubRepo,
   removeGithubAccessToken,
@@ -34,13 +34,21 @@ export default async function SourcesPage({
   searchParams: Promise<{ page?: string }>;
 }) {
   const [{ projectId }, sp] = await Promise.all([params, searchParams]);
+  await checkContractGate(projectId);
   const page = Math.max(1, parseInt(sp.page ?? "1", 10) || 1);
   const [user, nav, sources] = await Promise.all([
     requireDbUser(),
     getNavContext({ projectId }),
     getProjectSources(projectId, page, "GITHUB"),
   ]);
-  const { project, isOwner, hasNextPage, githubLeaderboard } = sources;
+  const {
+    project,
+    contributionEvents,
+    usersById,
+    isOwner,
+    hasNextPage,
+    githubLeaderboard,
+  } = sources;
   // Any project member can configure / sync sources. Only destructive
   // actions (remove repo, disconnect Jira) stay owner-gated.
   const canManage = true;
@@ -557,12 +565,12 @@ export default async function SourcesPage({
               </span>
             )}
           </div>
-          {project.contributionEvents.length === 0 ? (
+          {contributionEvents.length === 0 ? (
             <p className="body mute-ink" style={{ margin: 0 }}>
               {page > 1 ? "No more events." : "No contribution events yet. Add a repo and Sync."}
             </p>
           ) : (
-            project.contributionEvents.map((e, i) => {
+            contributionEvents.map((e, i) => {
               const payload = e.payloadJson as {
                 login?: string;
                 message?: string;
@@ -611,7 +619,18 @@ export default async function SourcesPage({
                       whiteSpace: "nowrap",
                     }}
                   >
-                    @{payload.login ?? "unknown"}
+                    @
+                    {(() => {
+                      const u = e.userId
+                        ? usersById.get(e.userId)
+                        : null;
+                      return (
+                        payload.login ??
+                        u?.name ??
+                        u?.email ??
+                        "unknown"
+                      );
+                    })()}
                   </span>
                   <a
                     href={payload.url}

@@ -541,6 +541,7 @@ async function checkMergedPrJiraDone(input: {
 export async function syncGithubProject(
   projectId: string,
 ): Promise<GithubSyncSummary> {
+  console.log("[syncGithubProject] enter:", { projectId });
   const summary: GithubSyncSummary = {
     projectId,
     repos: 0,
@@ -553,9 +554,17 @@ export async function syncGithubProject(
     errors: [],
   };
 
-  const source = await db.contributionSource.findUnique({
-    where: { projectId_sourceType: { projectId, sourceType: "GITHUB" } },
-  });
+  let source;
+  try {
+    source = await db.contributionSource.findUnique({
+      where: { projectId_sourceType: { projectId, sourceType: "GITHUB" } },
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "lookup failed";
+    console.error("[syncGithubProject] source lookup failed:", msg);
+    summary.errors.push(`GitHub source lookup: ${msg}`);
+    return summary;
+  }
   if (!source || !source.enabled) {
     summary.errors.push("No GitHub source configured");
     return summary;
@@ -570,10 +579,20 @@ export async function syncGithubProject(
     return summary;
   }
 
-  const identities = await db.sourceIdentity.findMany({
-    where: { projectId, sourceType: "GITHUB" },
-    include: { projectMember: true },
-  });
+  type IdentityWithMember = Prisma.SourceIdentityGetPayload<{
+    include: { projectMember: true };
+  }>;
+  let identities: IdentityWithMember[] = [];
+  try {
+    identities = await db.sourceIdentity.findMany({
+      where: { projectId, sourceType: "GITHUB" },
+      include: { projectMember: true },
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "lookup failed";
+    console.error("[syncGithubProject] identity lookup failed:", msg);
+    summary.errors.push(`Identity lookup: ${msg}`);
+  }
   const usernameToUserId = new Map(
     identities.map((i) => [
       i.externalId.toLowerCase(),
@@ -651,15 +670,21 @@ export async function syncGithubProject(
           const body = c.commit.message.includes("\n")
             ? c.commit.message.split("\n").slice(1).join("\n").trim()
             : "";
-          const author = c.author?.login ?? "unknown";
+          // Prefer the GitHub-resolved login (renders as @handle).
+          // Fall back to the raw git author name so the KB row still
+          // has an owner when GitHub couldn't link the commit's email.
+          const assignedTo =
+            c.author?.login ?? c.commit.author?.name ?? null;
+          const authorLabel = c.author?.login ?? "unknown";
           return {
             projectId,
             source: KB_SOURCES.GITHUB,
             sourceRefId: `commit:${repo}:${c.sha}`,
             sourceTypeLabel: "Commit",
             title: subject,
+            assignedTo,
             content: [
-              `${repo} · ${c.sha.slice(0, 7)} · @${author}`,
+              `${repo} · ${c.sha.slice(0, 7)} · @${authorLabel}`,
               body,
               c.html_url,
             ]
@@ -771,6 +796,7 @@ export async function syncGithubProject(
             sourceRefId: `pr:${repo}:${pr.number}`,
             sourceTypeLabel: `PR ${state}`,
             title: `#${pr.number} ${pr.title}`,
+            assignedTo: pr.user?.login ?? null,
             content: [`${repo} · @${author} · ${state}`, pr.html_url].join(
               "\n",
             ),

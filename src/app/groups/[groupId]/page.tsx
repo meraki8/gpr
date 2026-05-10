@@ -126,7 +126,7 @@ export default async function GroupPage({
                   className="num mute-ink"
                   style={{ textAlign: "right", fontSize: 15 }}
                 >
-                  —
+                  {p._count.members}
                 </div>
                 <Status kind={statusFromHealth(p.healthScore)} />
                 <div

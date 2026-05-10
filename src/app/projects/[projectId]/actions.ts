@@ -7,7 +7,7 @@ import { redirect } from "next/navigation";
 import { zodTextFormat } from "openai/helpers/zod";
 import { requireDbUser } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { sendInviteEmail } from "@/lib/email";
+import { sendInviteEmail, sendContractFullySignedEmail } from "@/lib/email";
 import { ai, AI_MODEL } from "@/lib/ai";
 import { MatchAnalysis } from "@/lib/types";
 import { getBaseUrl } from "@/lib/url";
@@ -703,10 +703,24 @@ export async function updateContract(projectId: string, content: string) {
   revalidatePath(`/projects/${projectId}/contract`);
 }
 
-export async function signContract(projectId: string, typedName: string) {
+export async function signContract(
+  projectId: string,
+  typedName: string,
+): Promise<{ error?: string }> {
   const user = await requireDbUser();
 
-  if (!typedName.trim()) throw new Error("Please type your name to sign");
+  const trimmed = typedName.trim();
+  if (!trimmed) return { error: "Please type your name to sign" };
+
+  // Validate identity: must match their registered name or email (case-insensitive).
+  // Return as data (not throw) so production builds don't strip the message.
+  const nameMatch = user.name && trimmed.toLowerCase() === user.name.toLowerCase();
+  const emailMatch = trimmed.toLowerCase() === user.email.toLowerCase();
+  if (!nameMatch && !emailMatch) {
+    return {
+      error: `Name doesn't match. Type your name exactly as shown (${user.name ?? user.email}) or your email address.`,
+    };
+  }
 
   const contract = await db.contract.findUnique({
     where: { projectId },
@@ -723,7 +737,7 @@ export async function signContract(projectId: string, typedName: string) {
   const alreadySigned = await db.contractSignature.findUnique({
     where: { contractId_userId: { contractId: contract.id, userId: user.id } },
   });
-  if (alreadySigned) throw new Error("You have already signed this contract");
+  if (alreadySigned) return { error: "You have already signed this contract" };
 
   await db.contractSignature.create({
     data: {
@@ -732,7 +746,39 @@ export async function signContract(projectId: string, typedName: string) {
     },
   });
 
+  // Check if all members have now signed — if so, email everyone.
+  try {
+    const [totalMembers, totalSignatures] = await Promise.all([
+      db.projectMember.count({ where: { projectId } }),
+      db.contractSignature.count({ where: { contractId: contract.id } }),
+    ]);
+
+    if (totalSignatures >= totalMembers) {
+      const allMembers = await db.projectMember.findMany({
+        where: { projectId },
+        include: { user: { select: { name: true, email: true } } },
+      });
+      const projectRecord = await db.project.findUnique({
+        where: { id: projectId },
+        select: { name: true },
+      });
+      if (projectRecord) {
+        await sendContractFullySignedEmail({
+          projectName: projectRecord.name,
+          projectId,
+          members: allMembers.map((m) => ({
+            name: m.user.name ?? m.user.email,
+            email: m.user.email,
+          })),
+        });
+      }
+    }
+  } catch (err) {
+    console.error("[contract] fully-signed email failed:", err);
+  }
+
   revalidatePath(`/projects/${projectId}/contract`);
+  return {};
 }
 
 export async function generateContractPdf(projectId: string) {
