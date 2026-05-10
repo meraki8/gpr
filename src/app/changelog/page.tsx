@@ -1,5 +1,4 @@
-import { PublicFooter } from "@/components/public-footer";
-import { PublicNav } from "@/components/public-nav";
+import { PublicLayout } from "@/components/public-layout";
 
 export const metadata = {
   title: "Changelog — GPR",
@@ -154,16 +153,9 @@ type RoadmapItem = {
 
 export default async function ChangelogPage() {
   return (
-    <main className="flex flex-1 flex-col">
-      <PublicNav
-        links={[
-          { href: "/", label: "Home" },
-          { href: "/#how", label: "How it works" },
-          { href: "/docs", label: "Docs" },
-        ]}
-      />
-
-      <section className="wrap" style={{ paddingTop: 100, paddingBottom: 40 }}>
+    <PublicLayout>
+      <main className="flex flex-1 flex-col">
+      <section className="wrap" style={{ paddingTop: 80, paddingBottom: 40 }}>
         <div className="label fade-up" style={{ marginBottom: 24 }}>
           Changelog
         </div>
@@ -455,7 +447,7 @@ export default async function ChangelogPage() {
         </div>
       </section>
 
-      <PublicFooter />
-    </main>
+      </main>
+    </PublicLayout>
   );
 }

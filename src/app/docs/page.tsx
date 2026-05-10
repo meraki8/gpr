@@ -1,5 +1,4 @@
-import { PublicFooter } from "@/components/public-footer";
-import { PublicNav } from "@/components/public-nav";
+import { PublicLayout } from "@/components/public-layout";
 
 export const metadata = {
   title: "Docs — GPR",
@@ -251,18 +250,11 @@ const sections: DocSection[] = [
 
 export default async function DocsPage() {
   return (
-    <main className="flex flex-1 flex-col">
-      <PublicNav
-        links={[
-          { href: "/", label: "Home" },
-          { href: "/#how", label: "How it works" },
-          { href: "/changelog", label: "Changelog" },
-        ]}
-      />
-
+    <PublicLayout>
+      <main className="flex flex-1 flex-col">
       <section
         className="wrap"
-        style={{ paddingTop: 100, paddingBottom: 40 }}
+        style={{ paddingTop: 80, paddingBottom: 40 }}
       >
         <div className="label fade-up" style={{ marginBottom: 24 }}>
           Docs
@@ -418,7 +410,7 @@ export default async function DocsPage() {
         </section>
       ))}
 
-      <PublicFooter />
-    </main>
+      </main>
+    </PublicLayout>
   );
 }

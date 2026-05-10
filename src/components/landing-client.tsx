@@ -556,36 +556,6 @@ export function LandingClient({ isSignedIn }: Props) {
       <div className="cursor-dot" aria-hidden />
       <div className="cursor-ring" aria-hidden />
 
-      <nav className="top">
-        <Link className="word-mark" href="/">
-          <span>GPR</span>
-          <span className="dot" />
-        </Link>
-        <div
-          style={{ display: "flex", gap: 28, alignItems: "center" }}
-          className="top-links"
-        >
-          <Link className="lk" href="#problem">
-            The problem
-          </Link>
-          <Link className="lk" href="#how">
-            How
-          </Link>
-          <Link className="lk" href="#caps">
-            Capabilities
-          </Link>
-          <Link className="lk" href="/docs">
-            Docs
-          </Link>
-          <Link className="lk" href="/changelog">
-            Changelog
-          </Link>
-          <Link className="lk pill" href={ctaHref}>
-            {ctaLabel}
-          </Link>
-        </div>
-      </nav>
-
       {/* ─── HERO ─── */}
       <section className="hero">
         <div className="float-num a num">46</div>
@@ -1226,16 +1196,6 @@ export function LandingClient({ isSignedIn }: Props) {
         </div>
       </section>
 
-      <footer>
-        <Link className="word-mark" href="/">
-          <span>GPR</span>
-          <span className="dot" />
-        </Link>
-        <div>© {new Date().getFullYear()} GPR — Group Project Referee</div>
-        <div>
-          Built with meraki — Lincoln University, Christchurch NZ
-        </div>
-      </footer>
     </main>
   );
 }
@@ -1341,8 +1301,8 @@ function GprHomeStyles() {
 
       /* ─── Hero ─── */
       .gpr-home .hero {
-        padding: 140px 40px 80px;
-        position: relative; min-height: 100vh;
+        padding: 80px 40px;
+        position: relative; min-height: calc(100vh - 80px);
         display: flex; flex-direction: column; justify-content: center;
       }
       .gpr-home .hero-grid { max-width: 1280px; margin: 0 auto; width: 100%; position: relative; }
