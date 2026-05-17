@@ -25,15 +25,25 @@ export async function getCurrentDbUser() {
   const email = clerkUser.emailAddresses[0]?.emailAddress;
   if (!email) return null;
 
-  const created = await db.user.upsert({
-    where: { clerkUserId: userId },
-    update: {},
-    create: {
-      clerkUserId: userId,
-      email,
-      name: clerkUser.fullName ?? clerkUser.firstName ?? null,
-      avatarUrl: clerkUser.imageUrl ?? null,
-    },
+  const name = clerkUser.fullName ?? clerkUser.firstName ?? null;
+  const avatarUrl = clerkUser.imageUrl ?? null;
+
+  // Email may already be linked to a different clerkUserId if the user signed
+  // in originally via another auth method (e.g. email first, now Google).
+  // Re-link the existing row to the new clerkUserId instead of failing the
+  // unique constraint on email.
+  const byEmail = await db.user.findUnique({ where: { email } });
+  if (byEmail) {
+    const relinked = await db.user.update({
+      where: { id: byEmail.id },
+      data: { clerkUserId: userId, name, avatarUrl },
+    });
+    await claimPendingInvites(relinked.id, relinked.email);
+    return relinked;
+  }
+
+  const created = await db.user.create({
+    data: { clerkUserId: userId, email, name, avatarUrl },
   });
 
   await claimPendingInvites(created.id, created.email);
